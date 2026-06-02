@@ -1,5 +1,5 @@
 // === 全域變數宣告 ===
-let currentScene = 0;   // 0: 主選單, 1: 遊戲一
+let currentScene = -1;  // -1: 起始畫面, 0: 主選單, 1: 遊戲一, 2: 遊戲二, 3: 遊戲三
 let mouseX_pos = 0;     // PoseNet 平滑後的 X (需在你的 PoseNet 邏輯中更新)
 let mouseY_pos = 0;     // PoseNet 平滑後的 Y
 
@@ -15,7 +15,7 @@ let isHandOpenPrev = false; // 用於偵測「剛張開」的瞬間
 let menuSelection = 0;   // 0: 行為, 1: 認知, 2: 建構
 
 let confirmTimer = 0;    // 確認進度計時器
-let confirmThreshold = 40; // 需要張開手維持約 0.7 秒
+let confirmThreshold = 90; // 延長確認時間，需要張開手維持約 1.5 秒
 
 // === 遊戲狀態與計時器 ===
 let gameState = "playing"; // playing, win, lose, intro
@@ -56,15 +56,15 @@ function setup() {
   video.size(640, 480); // 建議固定辨識解析度以增進效能
   video.hide(); // 隱藏原生網頁標籤，只畫在 Canvas 內
 
-  // 初始化 Handpose 模型
-  handpose = ml5.handPose(video, () => {
+  // 初始化 Handpose 模型 (ml5 v1.0+ 最新標準寫法，不傳入 video)
+  handpose = ml5.handPose(() => {
     console.log("手勢辨識模型已就緒！");
     modelLoaded = true;
-  });
 
-  // 最新版改用 detectStart 啟動持續偵測
-  handpose.detectStart(video, results => {
-    predictions = results;
+    // 模型載入完成後，才把 video 餵給 detectStart 開始持續辨識
+    handpose.detectStart(video, results => {
+      predictions = results;
+    });
   });
 }
 
@@ -73,14 +73,16 @@ function updateHandData() {
   if (modelLoaded && predictions.length > 0 && video.width > 0) {
     let hand = predictions[0]; // 最新版直接取得手部物件
 
-    // 1. 更新座標：使用食指指根 (點 5) 作為控制點，並進行鏡像與縮放映射
+    // 1. 更新座標：使用食指指尖 (點 8) 作為控制點，並進行鏡像與縮放映射
     // 最新版座標是物件格式 {x, y} 而非陣列 [x, y]
-    let targetX = map(hand.keypoints[5].x, 0, video.width, width, 0);
-    let targetY = map(hand.keypoints[5].y, 0, video.height, 0, height);
+    let targetX = map(hand.keypoints[8].x, 0, video.width, width, 0);
+    let targetY = map(hand.keypoints[8].y, 0, video.height, 0, height);
     
-    // 平滑移動 (Lerp)
-    mouseX_pos = lerp(mouseX_pos, targetX, 0.3);
-    mouseY_pos = lerp(mouseY_pos, targetY, 0.3);
+    // 防呆：避免 targetX/Y 在瞬間算出 NaN 導致游標永久當機消失
+    if (!isNaN(targetX) && !isNaN(targetY)) {
+      mouseX_pos = lerp(mouseX_pos || targetX, targetX, 0.3);
+      mouseY_pos = lerp(mouseY_pos || targetY, targetY, 0.3);
+    }
 
     // 2. 判定 Pinch (捏合)：計算食指尖 (8) 與拇指尖 (4) 的距離
     let pinchDist = dist(hand.keypoints[4].x, hand.keypoints[4].y, hand.keypoints[8].x, hand.keypoints[8].y);
@@ -108,7 +110,9 @@ function draw() {
   updateHandData(); // 每一影格更新手勢狀態
 
   // === 1. 復古霓虹背景（暗紫色調） ===
-  background(20, 15, 30);
+  // 讓背景顏色有微弱的呼吸變化
+  let bgPulse = sin(frameCount * 0.02) * 5;
+  background(20 + bgPulse, 15, 30 + bgPulse * 2);
   
   // 處理畫面震動效果
   push();
@@ -123,7 +127,9 @@ function draw() {
   for (let x = 0; x < width; x += 40) {
     line(x, 0, x, height);
   }
-  for (let y = 0; y < height; y += 40) {
+  // 讓水平網格有向下移動的動態感 (合成波/Retro 視覺效果)
+  let gridOffset = (frameCount * 0.8) % 40;
+  for (let y = gridOffset; y < height; y += 40) {
     line(0, y, width, y);
   }
 
@@ -189,7 +195,8 @@ function draw() {
   // 模擬 CRT 螢幕微弱的掃描線特效
   stroke(0, 255, 100, 15); // 綠色透明線條
   strokeWeight(2);
-  for (let sY = playAreaY; sY < playAreaY + playAreaH; sY += 6) {
+  let scanlineOffset = (frameCount * 0.5) % 6;
+  for (let sY = playAreaY + scanlineOffset; sY < playAreaY + playAreaH; sY += 6) {
     line(playAreaX, sY, playAreaX + playAreaW, sY);
   }
   
@@ -198,7 +205,7 @@ function draw() {
     fill(255, 255, 0);
     textSize(22);
     textAlign(CENTER, CENTER);
-    text("AI 手勢模型載入中，請稍候...", playAreaX + playAreaW / 2, playAreaY + playAreaH / 2);
+    text("AI 手勢模型載入中，請稍候...", width / 2, height / 2);
     pop(); // 結束震動效果的 push
     return; // 模型未載入時先暫停繪製後續關卡
   }
@@ -206,6 +213,10 @@ function draw() {
   // === 8. 場景切換邏輯 ===
   // 根據 currentScene 決定要畫哪一個關卡
   switch (currentScene) {
+    case -1:
+      // 將起始畫面參數改為全畫布大小 (0, 0, width, height)
+      drawBootScreen(0, 0, width, height);
+      break;
     case 0:
       // 重置遊戲狀態
       gameState = "playing";
@@ -215,8 +226,8 @@ function draw() {
       menuSelection = floor(map(menuY, height * 0.3, height * 0.7, 0, 3));
       menuSelection = constrain(menuSelection, 0, 2);
 
-      // --- 優化：蓄力確認機制 ---
-      if (isHandOpen && modelLoaded && predictions.length > 0) {
+      // --- 優化：蓄力確認機制 (改為捏合) ---
+      if (isPinching && modelLoaded && predictions.length > 0) {
         confirmTimer++;
         if (confirmTimer >= confirmThreshold) {
           handleMenuSelection(playAreaX, playAreaY, playAreaW, playAreaH);
@@ -242,82 +253,25 @@ function draw() {
   // === 6. 右側：實體遊戲按鈕區 ===
   drawControls(screenX, screenW, screenY, screenH, consoleW);
 
-  // --- 新增：在畫面上繪製手部骨架與圓點 ---
+  // --- 全域手部游標顯示 ---
   if (predictions.length > 0) {
-    let hand = predictions[0];
-    
-    // 1. 定義手指連線 (骨架)
-    const connections = [
-      [0, 1, 2, 3, 4],       // 大拇指
-      [5, 6, 7, 8],          // 食指
-      [9, 10, 11, 12],       // 中指
-      [13, 14, 15, 16],      // 無名指
-      [17, 18, 19, 20],      // 小指
-      [0, 5, 9, 13, 17, 0]   // 掌心
-    ];
-
-    noFill();
-    stroke(0, 255, 100, 150); // 半透明綠色連線
-    strokeWeight(3);
-    for (let path of connections) {
-      beginShape();
-      for (let i of path) {
-        let x = map(hand.keypoints[i].x, 0, video.width, width, 0);
-        let y = map(hand.keypoints[i].y, 0, video.height, 0, height);
-        vertex(x, y);
-      }
-      endShape();
-    }
-
-    // 2. 畫出所有關節點
-    for (let i = 0; i < hand.keypoints.length; i++) {
-      let kp = hand.keypoints[i];
-      let x = map(kp.x, 0, video.width, width, 0);
-      let y = map(kp.y, 0, video.height, 0, height);
-
+    push();
+    if (isPinching) {
+      fill(255, 0, 0); // 捏合時變紅色
       noStroke();
-      if (i === 5 || i === 8 || i === 4) {
-        fill(255, 255, 0); // 重要節點標為黃色
-        ellipse(x, y, 10, 10);
-      } else {
-        fill(0, 255, 100); 
-        ellipse(x, y, 6, 6);
-      }
+      ellipse(mouseX_pos, mouseY_pos, 15, 15);
+      noFill();
+      stroke(255, 0, 0);
+      strokeWeight(2);
+      ellipse(mouseX_pos, mouseY_pos, 30, 30);
+    } else {
+      fill(0, 255, 100, 200); // 沒捏合時為半透明綠色
+      stroke(0, 255, 100);
+      strokeWeight(2);
+      ellipse(mouseX_pos, mouseY_pos, 20, 20);
     }
+    pop();
   }
-
-  // --- 新增：右上角鏡像預覽視窗 ---
-  push();
-  let previewW = 160;
-  let previewH = 120;
-  let previewX = width - previewW - 20;
-  let previewY = 20;
-  
-  // 預覽視窗外框
-  stroke(0, 255, 100);
-  strokeWeight(2);
-  fill(0, 150);
-  rect(previewX - 5, previewY - 5, previewW + 10, previewH + 10, 5);
-  
-  // 繪製鏡像視訊
-  translate(previewX + previewW, previewY);
-  scale(-1, 1);
-  image(video, 0, 0, previewW, previewH);
-
-  // --- 在預覽視窗中繪製手部關鍵點 (用於除錯) ---
-  if (predictions.length > 0) {
-    let hand = predictions[0];
-    for (let i = 0; i < hand.keypoints.length; i++) {
-      let kp = hand.keypoints[i];
-      let px = map(kp.x, 0, video.width, 0, previewW);
-      let py = map(kp.y, 0, video.height, 0, previewH);
-
-      noStroke();
-      fill(i === 5 || i === 8 || i === 4 ? color(255, 255, 0) : color(0, 255, 100));
-      ellipse(px, py, 4, 4); // 預覽窗較小，圓點也縮小
-    }
-  }
-  pop();
 
   isPinchingPrev = isPinching; // 紀錄這一影格的狀態供下一影格比較
   isHandOpenPrev = isHandOpen; // 紀錄這一影格的狀態供下一影格比較
@@ -362,30 +316,67 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   
   textAlign(CENTER, CENTER);
   fill(0, 255, 100);
-  textSize(22);
+  textSize(32); // 放大標題
   text(title, pX + pW / 2, pY + pH * 0.2);
   
   fill(255);
-  textSize(13);
+  textSize(18); // 放大目標與操作
   textStyle(BOLD);
   text("GOAL: " + goal, pX + pW / 2, pY + pH * 0.35);
   text("CONTROL: " + control, pX + pW / 2, pY + pH * 0.42);
   
   textStyle(NORMAL);
-  textSize(11);
+  textSize(15); // 放大理論文字
   fill(200, 200, 255);
   text(theory, pX + 40, pY + pH * 0.52, pW - 80); // 使用寬度參數實現自動換行
 
-  fill(255, 200, 0);
-  textSize(12);
-  text("張開五指 (Open Hand) 開始挑戰", pX + pW / 2, pY + pH * 0.8);
-  pop();
+  // --- 新增：明確的開始按鈕與蓄力機制 ---
+  let btnW = 160;
+  let btnH = 45;
+  let btnX = pX + (pW - btnW) / 2;
+  let btnY = pY + pH * 0.78;
 
-  // 偵測從合攏到張開的瞬間
-  if (isHandOpen && !isHandOpenPrev) {
-    gameState = "playing";
-    lastTimerTick = millis(); // 進入遊戲後才開始計算時間
+  let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW &&
+                   mouseY_pos > btnY && mouseY_pos < btnY + btnH;
+
+  fill(255, 200, 0);
+  textSize(14);
+  text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
+
+  if (isHovering) {
+    fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+    rect(btnX, btnY, btnW, btnH, 5);
+    fill(0);
+    textSize(16);
+    text("開始挑戰", pX + pW / 2, btnY + 22);
+
+    if (isPinching && modelLoaded && predictions.length > 0) {
+      confirmTimer++;
+      fill(255, 255, 0);
+      let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
+      rect(btnX + 5, btnY + btnH - 10, barW, 6);
+      if (confirmTimer >= confirmThreshold) {
+        gameState = "playing";
+        lastTimerTick = millis();
+        confirmTimer = 0; // 觸發後重置計時器
+      }
+    } else {
+      confirmTimer = Math.max(0, confirmTimer - 2);
+    }
+  } else {
+    noFill();
+    stroke(0, 255, 100);
+    strokeWeight(2);
+    rect(btnX, btnY, btnW, btnH, 5);
+    noStroke();
+    fill(0, 255, 100);
+    textSize(16);
+    text("開始挑戰", pX + pW / 2, btnY + 22);
+    
+    // 游標不在按鈕上時，進度條也會退回
+    confirmTimer = Math.max(0, confirmTimer - 2);
   }
+  pop();
 }
 
 // --- 核心：繪製結束畫面 ---
@@ -398,32 +389,69 @@ function drawEndScreen(pX, pY, pW, pH) {
   textAlign(CENTER, CENTER);
   if (gameState === "win") {
     fill(0, 255, 100);
-    textSize(30);
+    textSize(40); // 放大結束標題
     text("挑戰成功！", pX + pW / 2, pY + pH / 2 - 20);
   } else {
     fill(255, 50, 50);
-    textSize(30);
+    textSize(40);
     text("挑戰失敗", pX + pW / 2, pY + pH / 2 - 20);
   }
   
-  fill(255);
-  textSize(12);
-  text("張開五指回到選單", pX + pW / 2, pY + pH / 2 + 30);
-  pop();
+  // --- 新增：明確的回選單按鈕 ---
+  let btnW = 160;
+  let btnH = 45;
+  let btnX = pX + (pW - btnW) / 2;
+  let btnY = pY + pH * 0.7;
 
-  if (isHandOpen && !isHandOpenPrev) {
-    currentScene = 0;
+  let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW &&
+                   mouseY_pos > btnY && mouseY_pos < btnY + btnH;
+
+  fill(255, 200, 0);
+  textSize(14);
+  noStroke();
+  text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
+
+  if (isHovering) {
+    fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+    rect(btnX, btnY, btnW, btnH, 5);
+    fill(0);
+    textSize(16);
+    text("回主選單", pX + pW / 2, btnY + 22);
+
+    if (isPinching && modelLoaded && predictions.length > 0) {
+      confirmTimer++;
+      fill(255, 255, 0);
+      let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
+      rect(btnX + 5, btnY + btnH - 10, barW, 6);
+      if (confirmTimer >= confirmThreshold) {
+        currentScene = 0;
+        confirmTimer = 0;
+      }
+    } else {
+      confirmTimer = Math.max(0, confirmTimer - 2);
+    }
+  } else {
+    noFill();
+    stroke(0, 255, 100);
+    strokeWeight(2);
+    rect(btnX, btnY, btnW, btnH, 5);
+    noStroke();
+    fill(0, 255, 100);
+    textSize(16);
+    text("回主選單", pX + pW / 2, btnY + 22);
+    confirmTimer = Math.max(0, confirmTimer - 2);
   }
+  pop();
 }
 
 // --- 遊戲一：物件導向類別 ---
 class FallingItem {
   constructor(pX, pY, pW, pH) {
     this.pX = pX; this.pY = pY; this.pW = pW; this.pH = pH;
-    this.x = random(pX + 20, pX + pW - 20); // 隨機 X，限制在螢幕內
-    this.y = pY - 20;                       // 從螢幕上方外面開始掉
+    this.x = random(pX + 30, pX + pW - 30); // 隨機 X，邊界往內縮一點避免大物件卡牆
+    this.y = pY - 40;                       // 從螢幕上方外面開始掉 (配合放大拉高起始點)
     this.speed = random(2, 5);              // 隨機掉落速度
-    this.size = 25;
+    this.size = 45;                         // 紀錄變大的尺寸
     // 50% 機率是起司，50% 是電擊
     this.type = random(1) > 0.5 ? "cheese" : "shock";
   }
@@ -436,15 +464,15 @@ class FallingItem {
     noStroke();
     if (this.type === "cheese") {
       fill(255, 200, 0); // 黃色起司
-      triangle(this.x, this.y, this.x - 12, this.y + 20, this.x + 12, this.y + 20);
+      triangle(this.x, this.y, this.x - 20, this.y + 35, this.x + 20, this.y + 35); // 放大三角形
       fill(150, 100, 0);
-      ellipse(this.x, this.y + 12, 4, 4); // 起司的小孔
+      ellipse(this.x, this.y + 20, 8, 8); // 放大的起司小孔
     } else {
       fill(0, 200, 255); // 藍色電擊棒
-      rect(this.x - 5, this.y, 10, 25);
+      rect(this.x - 10, this.y, 20, 45, 3); // 放大長方形並加上圓角
       stroke(255);
-      strokeWeight(2);
-      line(this.x - 8, this.y + 5, this.x + 8, this.y + 15); // 閃電特效
+      strokeWeight(3);
+      line(this.x - 12, this.y + 10, this.x + 12, this.y + 30); // 放大閃電特效
     }
   }
 
@@ -489,23 +517,47 @@ function runGameOne(pX, pY, pW, pH) {
   let playerX = constrain(mouseX_pos, pX + 15, pX + pW - 15);
   let playerY = constrain(mouseY_pos, pY + 15, pY + pH - 15);
 
-  // 畫老鼠 (優化後的 8-bit 風格)
+  // 畫老鼠 (全新頂視角，更像老鼠的特徵)
   push();
   translate(playerX, playerY);
+  
+  // 1. 老鼠尾巴
+  noFill();
+  stroke(150);
+  strokeWeight(3);
+  bezier(0, 10, 15, 25, -15, 35, 5, 45); // 彎曲的長尾巴
+  
+  // 2. 老鼠耳朵
   noStroke();
-  fill(200); 
-  ellipse(0, 0, 30, 20); // 身體
+  fill(180);
+  ellipse(-12, -5, 16, 16); // 左耳外框
+  ellipse(12, -5, 16, 16);  // 右耳外框
   fill(255, 150, 150);
-  ellipse(-12, -10, 15, 15); // 左耳
-  ellipse(12, -10, 15, 15); // 右耳
-  fill(255);
-  ellipse(-5, -2, 5, 5); // 眼白
-  ellipse(5, -2, 5, 5);
+  ellipse(-12, -5, 8, 8);   // 左耳內耳
+  ellipse(12, -5, 8, 8);    // 右耳內耳
+  
+  // 3. 老鼠身體與尖尖的臉
+  fill(200);
+  ellipse(0, 0, 26, 35);     // 圓圓的身體
+  triangle(-12, -5, 12, -5, 0, -22); // 尖尖的鼻子輪廓
+  
+  // 4. 眼睛
   fill(0);
-  ellipse(-5, -2, 2, 2); // 瞳孔
-  ellipse(5, -2, 2, 2);
+  ellipse(-5, -12, 4, 4); // 左眼
+  ellipse(5, -12, 4, 4);  // 右眼
+  
+  // 5. 鬍鬚
+  stroke(200);
+  strokeWeight(1);
+  line(-3, -18, -18, -22); // 左上鬍鬚
+  line(-3, -16, -18, -16); // 左下鬍鬚
+  line(3, -18, 18, -22);   // 右上鬍鬚
+  line(3, -16, 18, -16);   // 右下鬍鬚
+  
+  // 6. 鼻子
+  noStroke();
   fill(255, 100, 100);
-  ellipse(0, 2, 6, 4); // 鼻子
+  ellipse(0, -22, 6, 6);  // 粉紅小鼻子
   pop();
   
   // B. 自動生成物件
@@ -519,9 +571,9 @@ function runGameOne(pX, pY, pW, pH) {
     items[i].update();
     items[i].display();
 
-    // 基礎碰撞偵測 (使用 dist)
-    let d = dist(playerX, playerY, items[i].x, items[i].y);
-    if (d < 30) {
+    // 基礎碰撞偵測 (配合放大，將判定距離從 30 增加到 45)
+    let d = dist(playerX, playerY, items[i].x, items[i].y + 15); // 將判定中心下移到物件中心
+    if (d < 45) {
       if (items[i].type === "cheese") {
         score += 10; 
         if (score >= 100) gameState = "win"; // 滿百分勝利
@@ -593,19 +645,33 @@ class MemoryCard {
 
     push();
 
+    // --- 新增：計算翻轉進度 (0.0 為平放，1.0 為邊緣朝向鏡頭) ---
+    let flipProgress = 1.0 - abs(this.scaleX);
     let offsetY = 0;
+
     if (this.matchAnimTimer > 0) {
       // 彈跳效果：使用 sin 函數產生拋物線跳動感
       offsetY = -sin(map(this.matchAnimTimer, 40, 0, 0, PI)) * 40;
       // 發光效果：利用原生 Canvas 陰影 API
       drawingContext.shadowBlur = 30;
       drawingContext.shadowColor = "rgba(0, 255, 100, 1)";
+      drawingContext.shadowOffsetY = 0;
       this.matchAnimTimer--; // 更新計時器
+    } else {
+      // --- 優化：翻轉時的動態 3D 陰影 ---
+      // 隨著卡片翻轉，陰影會變得更模糊且往下偏移，產生懸浮感
+      drawingContext.shadowBlur = 10 + flipProgress * 20;
+      drawingContext.shadowColor = "rgba(0, 0, 0, 0.5)";
+      drawingContext.shadowOffsetY = 5 + flipProgress * 12;
     }
 
     // 將座標系統移到卡片中心點，方便進行中心縮放
     translate(this.x + this.w / 2, this.y + this.h / 2 + offsetY);
-    scale(abs(this.scaleX), 1.0); // 使用絕對值繪製，避免內容被鏡像翻轉
+    
+    // --- 優化：模擬 3D 透視放大 ---
+    // 當卡片轉向側面時，同時稍微放大，產生往鏡頭靠近的 3D 錯覺
+    let popScale = 1.0 + flipProgress * 0.15; // 最高放大 15%
+    scale(abs(this.scaleX) * popScale, popScale); 
 
     stroke(0, 255, 100);
     strokeWeight(2);
@@ -621,9 +687,28 @@ class MemoryCard {
     } else {
       fill(20, 30, 40); // 背面：深色
       rect(-this.w / 2, -this.h / 2, this.w, this.h, 5);
-      fill(100);
+      
+      // --- 新增：牌背復古幾何裝飾 ---
+      push();
+      noFill();
+      // 1. 霓虹藍色內框
+      stroke(50, 100, 200, 150); 
+      strokeWeight(2);
+      rect(-this.w * 0.4, -this.h * 0.4, this.w * 0.8, this.h * 0.8, 3);
+      
+      // 2. 霓虹紅色圓形與對角線交叉
+      stroke(220, 50, 50, 100);
+      strokeWeight(1);
+      ellipse(0, 0, this.w * 0.6, this.w * 0.6);
+      line(-this.w * 0.4, -this.h * 0.4, this.w * 0.4, this.h * 0.4);
+      line(this.w * 0.4, -this.h * 0.4, -this.w * 0.4, this.h * 0.4);
+      pop();
+
+      // 中心懸浮的發光問號
+      noStroke();
+      fill(150, 255, 200);
       textAlign(CENTER, CENTER);
-      textSize(20);
+      textSize(24);
       text("?", 0, 0);
     }
     pop();
@@ -881,6 +966,17 @@ function runGameThree(pX, pY, pW, pH) {
   image(video, 0, 0, pW, pH);
   pop();
 
+  // 獨立背景：藍曬圖 (Blueprint) 深藍色
+  push();
+  fill(10, 30, 70, 220);
+  noStroke();
+  rect(pX, pY, pW, pH);
+  stroke(255, 255, 255, 30);
+  strokeWeight(1);
+  for (let i = pX; i < pX + pW; i += 40) line(i, pY, i, pY + pH);
+  for (let j = pY; j < pY + pH; j += 40) line(pX, j, pX + pW, j);
+  pop();
+
   // B. 繪製地基
   fill(40, 50, 60);
   rect(pX + pW*0.2, pY + pH - 20, pW*0.6, 20);
@@ -939,17 +1035,24 @@ function runGameThree(pX, pY, pW, pH) {
 
   // F. 介面文字
   fill(0, 255, 100);
-  textSize(14);
+  textSize(24);
   textAlign(CENTER, TOP);
-  text("建構主義：堆疊 4 個知識積木", pX + pW/2, pY + 10);
+  text("建構主義：堆疊 4 個知識積木", pX + pW/2, pY + 20);
 
   // 顯示計時器
   textAlign(RIGHT, TOP);
   fill(255, 200, 0);
-  text("時間: " + countdown, pX + pW - 10, pY + 10);
+  text("時間: " + countdown, pX + pW - 20, pY + 20);
   
   if (stackedBlocks.length >= 4) {
     gameState = "win";
+  }
+
+  // 繪製手部游標 (空手或積木掉落中)
+  if (heldBlock === null || heldBlock.isFalling) {
+    fill(isPinching ? color(255, 0, 0) : color(0, 255, 100));
+    noStroke();
+    ellipse(mouseX_pos, mouseY_pos, isPinching ? 15 : 20, isPinching ? 15 : 20);
   }
 }
 
@@ -986,6 +1089,76 @@ function handleMenuSelection(pX, pY, pW, pH) {
   isPinching = false;
 }
 
+// --- 新增：起始情境畫面 (Boot Screen - 機台螢幕內) ---
+function drawBootScreen(pX, pY, pW, pH) {
+  // 封面不需要攝影機，只保留呼吸感遮罩與手部游標
+  push();
+  fill(20, 15, 30, 150 + sin(frameCount * 0.05) * 50);
+  rect(pX, pY, pW, pH);
+  pop();
+
+  // 未偵測到手部的提示
+  if (modelLoaded && predictions.length === 0) {
+    fill(255, 50, 50);
+    textSize(20); // 稍微放大
+    textAlign(CENTER, TOP);
+    text("尚未偵測到手部，請將手移入畫面", pX + pW/2, pY + 40);
+  }
+
+  push();
+  textAlign(CENTER, CENTER);
+  fill(0, 255, 100);
+  textSize(60); // 放大全螢幕標題
+  text("教育心理學博物館", pX + pW / 2, pY + pH * 0.35);
+  
+  fill(200, 200, 255);
+  textSize(24); // 放大內文說明
+  text("歡迎來到復古教育機台！\n\n在這裡，我們將透過三個經典的互動小遊戲\n帶您親身體驗 行為主義、認知主義 與 建構主義。", pX + pW / 2, pY + pH * 0.55);
+
+  // 進入機台按鈕
+  let btnW = 240;
+  let btnH = 60;
+  let btnX = pX + (pW - btnW) / 2;
+  let btnY = pY + pH * 0.75;
+  let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
+
+  fill(255, 200, 0);
+  textSize(18);
+  text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
+
+  if (isHovering) {
+    fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+    rect(btnX, btnY, btnW, btnH, 10);
+    fill(0);
+    textSize(24);
+    text("進入機台", pX + pW / 2, btnY + 30);
+
+    if (isPinching && predictions.length > 0) {
+      confirmTimer++;
+      fill(255, 255, 0);
+      let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
+      rect(btnX + 5, btnY + btnH - 10, barW, 6);
+      if (confirmTimer >= confirmThreshold) {
+        currentScene = 0;
+        confirmTimer = 0;
+      }
+    } else {
+      confirmTimer = Math.max(0, confirmTimer - 2);
+    }
+  } else {
+    noFill();
+    stroke(0, 255, 100);
+    strokeWeight(2);
+    rect(btnX, btnY, btnW, btnH, 10);
+    noStroke();
+    fill(0, 255, 100);
+    textSize(24);
+    text("進入機台", pX + pW / 2, btnY + 30);
+    confirmTimer = Math.max(0, confirmTimer - 2);
+  }
+  pop();
+}
+
 // --- 分離出來的繪圖輔助 Function (保持 draw 乾淨) ---
 function drawMenu(pX, pY, pW, pH) {
   // 繪製視訊背景 (鏡像處理)
@@ -994,7 +1167,8 @@ function drawMenu(pX, pY, pW, pH) {
   scale(-1, 1);
   image(video, 0, 0, pW, pH);
   // 加上一層半透明黑色，讓文字更清楚
-  fill(0, 180);
+  // 加入呼吸感遮罩，讓畫面有螢幕閃爍感
+  fill(0, 180 + sin(frameCount * 0.05) * 30);
   rect(0, 0, pW, pH);
   pop();
 
@@ -1008,48 +1182,44 @@ function drawMenu(pX, pY, pW, pH) {
 
   fill(0, 255, 100);
   textAlign(CENTER, TOP);
-  textSize(20);
-  text("選擇學習關卡", pX + pW/2, pY + 20);
+  textSize(32); // 放大選單標題
+  text("選擇學習關卡", pX + pW/2, pY + 30);
   
   let menuItems = ["1. 行為主義 (操作制約)", "2. 認知主義 (訊息處理)", "3. 建構主義 (知識搭建)"];
   
+  textSize(22); // 設定選單項目文字大小
   for (let i = 0; i < menuItems.length; i++) {
-    let itemY = pY + 70 + i * 50;
+    let itemY = pY + 100 + i * 70; // 增加選項間距
     if (i === menuSelection) {
       // 選中效果
       // 呼吸燈閃爍效果：利用 sin 函數讓透明度在 100 到 200 之間變化
       fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
-      rect(pX + 20, itemY, pW - 40, 40, 5);
+      rect(pX + 20, itemY, pW - 40, 50, 5); // 加高選中框
       
       // 繪製蓄力進度條
       if (confirmTimer > 0) {
         fill(255, 255, 0);
         let barW = map(confirmTimer, 0, confirmThreshold, 0, pW - 60);
-        rect(pX + 30, itemY + 32, barW, 4);
+        rect(pX + 30, itemY + 40, barW, 6); // 進度條加粗並下移
       }
 
       fill(0);
-      text("> " + menuItems[i] + " <", pX + pW/2, itemY + 12);
+      text("> " + menuItems[i] + " <", pX + pW/2, itemY + 14);
     } else {
       // 未選中效果
       stroke(0, 255, 100);
       noFill();
-      rect(pX + 20, itemY, pW - 40, 40, 5);
+      rect(pX + 20, itemY, pW - 40, 50, 5); // 加高未選中框
       noStroke();
       fill(0, 255, 100);
-      text(menuItems[i], pX + pW/2, itemY + 12);
+      text(menuItems[i], pX + pW/2, itemY + 14);
     }
   }
 
-  textSize(11);
+  textSize(18); // 放大操作說明文字
   fill(255, 200, 0);
-  text("上下移動手勢進行選單切換", pX + pW/2, pY + pH - 50);
-  text("張開五指進入所選關卡", pX + pW/2, pY + pH - 35);
-  
-  // 更新選單游標：張開時放大，捏合時縮小
-  stroke(0, 255, 100);
-  fill(0, 255, 100, isHandOpen ? 255 : 100);
-  ellipse(mouseX_pos, mouseY_pos, isHandOpen ? 30 : 20, isHandOpen ? 30 : 20);
+  text("💡 上下移動手勢進行選單切換", pX + pW/2, pY + pH - 60);
+  text("👉 捏合 (Pinch) 停留來確認", pX + pW/2, pY + pH - 30);
 }
 
 function drawControls(screenX, screenW, screenY, screenH, consoleW) {
