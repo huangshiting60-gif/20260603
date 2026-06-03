@@ -26,6 +26,10 @@ let lastTimerTick = 0;
 let handpose;
 let predictions = [];
 let modelLoaded = false; // 用於追蹤 AI 模型是否載入完成
+let loadingBg; // 儲存載入畫面的背景圖
+let bootBg; // 儲存起始畫面的背景圖
+let loadingAlpha = 0; // 控制載入畫面的淡入淡出透明度
+let loadingProgress = 0; // 模擬載入進度條
 
 // 遊戲一：行為主義老鼠迷宮變數
 let items = [];         // 儲存所有掉落物 (起司與電擊)
@@ -47,6 +51,13 @@ let heldBlock = null;    // 目前手中抓著的積木
 let buildTimer = 0;
 let floorY = 0;          // 地板高度
 let shakeTimer = 0;      // 震動計時器
+
+function preload() {
+  // 預先載入 1.png 圖片作為背景
+  loadingBg = loadImage('1.png');
+  // 預先載入 2.png 圖片作為起始畫面背景
+  bootBg = loadImage('2.png');
+}
 
 function setup() {
   // 建立橫式全螢幕畫布
@@ -185,7 +196,7 @@ function draw() {
 
   // === 5. 真正的遊戲畫面渲染區（CRT 電視綠色感） ===
   noStroke();
-  fill(15, 25, 20); // 暗綠色底色
+  fill(10, 20, 30); // 暗藍色底色
   let playAreaX = screenX + 30;
   let playAreaY = screenY + 40;
   let playAreaW = screenW - 60;
@@ -193,21 +204,11 @@ function draw() {
   rect(playAreaX, playAreaY, playAreaW, playAreaH);
 
   // 模擬 CRT 螢幕微弱的掃描線特效
-  stroke(0, 255, 100, 15); // 綠色透明線條
+  stroke(0, 200, 255, 15); // 水藍色透明線條
   strokeWeight(2);
   let scanlineOffset = (frameCount * 0.5) % 6;
   for (let sY = playAreaY + scanlineOffset; sY < playAreaY + playAreaH; sY += 6) {
     line(playAreaX, sY, playAreaX + playAreaW, sY);
-  }
-  
-  // --- 新增：AI 模型載入狀態防護 ---
-  if (!modelLoaded) {
-    fill(255, 255, 0);
-    textSize(22);
-    textAlign(CENTER, CENTER);
-    text("AI 手勢模型載入中，請稍候...", width / 2, height / 2);
-    pop(); // 結束震動效果的 push
-    return; // 模型未載入時先暫停繪製後續關卡
   }
 
   // === 8. 場景切換邏輯 ===
@@ -265,8 +266,8 @@ function draw() {
       strokeWeight(2);
       ellipse(mouseX_pos, mouseY_pos, 30, 30);
     } else {
-      fill(0, 255, 100, 200); // 沒捏合時為半透明綠色
-      stroke(0, 255, 100);
+      fill(0, 200, 255, 200); // 沒捏合時為半透明水藍色
+      stroke(0, 200, 255);
       strokeWeight(2);
       ellipse(mouseX_pos, mouseY_pos, 20, 20);
     }
@@ -275,6 +276,82 @@ function draw() {
 
   isPinchingPrev = isPinching; // 紀錄這一影格的狀態供下一影格比較
   isHandOpenPrev = isHandOpen; // 紀錄這一影格的狀態供下一影格比較
+
+  // --- 新增：AI 模型載入畫面 (淡入淡出過場特效) ---
+  if (!modelLoaded) {
+    loadingAlpha = min(loadingAlpha + 10, 255); // 模型未載入，增加透明度 (淡入)
+    loadingProgress += (90 - loadingProgress) * 0.05; // 模擬載入進度最高到 90%
+  } else {
+    loadingAlpha = max(loadingAlpha - 10, 0);   // 模型已載入，減少透明度 (淡出)
+    loadingProgress += (100 - loadingProgress) * 0.2; // 載入完成，瞬間跑到 100%
+  }
+
+  // 只要還沒完全透明，就持續在最上層繪製載入畫面
+  if (loadingAlpha > 0) {
+    push();
+    // 1. 新增純黑底色，完全遮擋底層的遊戲機畫面
+    fill(0, loadingAlpha);
+    noStroke();
+    rect(0, 0, width, height);
+    
+    // 2. 繪製背景圖 (不再刻意降低透明度，直接跟隨 loadingAlpha 淡出)
+    tint(255, loadingAlpha); 
+    image(loadingBg, 0, 0, width, height); 
+    
+    // 3. 加上一層微微的深色遮罩，讓文字與進度條更清晰
+    fill(10, 15, 25, map(loadingAlpha, 0, 255, 0, 180));
+    noStroke();
+    rect(0, 0, width, height);
+    
+    // 4. 精美文字設計 (霓虹發光效果)
+    drawingContext.shadowBlur = 15;
+    // 移除綠色，改用科技感的霓虹水藍色
+    drawingContext.shadowColor = `rgba(0, 200, 255, ${loadingAlpha / 255})`;
+    fill(255, 255, 255, loadingAlpha); // 標題改為乾淨的白色
+    textSize(36); // 文字變大
+    textStyle(BOLD);
+    textAlign(CENTER, CENTER);
+    text("AI 模型初始化中...", width / 2, height / 2 - 30); // 改為全中文
+    
+    drawingContext.shadowBlur = 0; // 關閉發光避免影響其他繪圖
+    textSize(16);
+    textStyle(NORMAL);
+    fill(220, 240, 255, loadingAlpha); // 移除原本的微綠色調
+    text("AI 手勢識別模組載入中，請保持雙手於畫面內", width / 2, height / 2 + 15);
+    
+    // 4. 科幻風動態進度條
+    let barW = 350;
+    let barH = 12;
+    let barX = width / 2 - barW / 2;
+    let barY = height / 2 + 50;
+    
+    stroke(0, 200, 255, loadingAlpha); // 外框也改為水藍色
+    strokeWeight(2);
+    noFill();
+    rect(barX, barY, barW, barH, 6); // 進度條外框
+    
+    noStroke();
+    // 替換為「一格一格」的格狀讀取效果
+    let totalBlocks = 20; // 總格數
+    let blockSpacing = 4; // 格子之間的間距
+    let blockW = (barW - 4 - (totalBlocks - 1) * blockSpacing) / totalBlocks; // 計算單格寬度 (扣除外框厚度)
+    let activeBlocks = floor(map(loadingProgress, 0, 100, 0, totalBlocks));
+    
+    for (let i = 0; i < totalBlocks; i++) {
+      let bX = barX + 2 + i * (blockW + blockSpacing);
+      let bY = barY + 2;
+      fill(i < activeBlocks ? color(0, 200, 255, loadingAlpha) : color(50, 60, 80, loadingAlpha));
+      rect(bX, bY, blockW, barH - 4, 2); // 繪製帶有圓角的獨立小方塊
+    }
+    
+    // 百分比文字顯示
+    fill(255, loadingAlpha);
+    textSize(12);
+    textAlign(RIGHT, CENTER);
+    text(floor(loadingProgress) + "%", barX + barW, barY - 15);
+    pop();
+  }
+
   pop(); // 結束震動效果的作用範圍
 }
 
@@ -302,20 +379,20 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   for (let i = 0; i < 20; i++) {
     // 利用 frameCount 做簡單的頻率控制，讓點點看起來在閃動
     if (frameCount % 10 < 5) {
-      fill(0, 255, 100, random(50, 150));
+      fill(0, 200, 255, random(50, 150));
       rect(random(pX, pX + pW), random(pY, pY + pH), 4, 4);
     }
   }
 
   // 2. 復古電子感呼吸邊框 (利用 sin 讓透明度產生律動)
-  stroke(0, 255, 100, 150 + sin(frameCount * 0.1) * 100);
+  stroke(0, 200, 255, 150 + sin(frameCount * 0.1) * 100);
   strokeWeight(2);
   noFill();
   rect(pX + 5, pY + 5, pW - 10, pH - 10, 2);
   noStroke();
   
   textAlign(CENTER, CENTER);
-  fill(0, 255, 100);
+  fill(0, 200, 255);
   textSize(32); // 放大標題
   text(title, pX + pW / 2, pY + pH * 0.2);
   
@@ -344,7 +421,7 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
 
   if (isHovering) {
-    fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+    fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
     rect(btnX, btnY, btnW, btnH, 5);
     fill(0);
     textSize(16);
@@ -365,11 +442,11 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
     }
   } else {
     noFill();
-    stroke(0, 255, 100);
+    stroke(0, 200, 255);
     strokeWeight(2);
     rect(btnX, btnY, btnW, btnH, 5);
     noStroke();
-    fill(0, 255, 100);
+    fill(0, 200, 255);
     textSize(16);
     text("開始挑戰", pX + pW / 2, btnY + 22);
     
@@ -388,7 +465,7 @@ function drawEndScreen(pX, pY, pW, pH) {
   
   textAlign(CENTER, CENTER);
   if (gameState === "win") {
-    fill(0, 255, 100);
+    fill(0, 200, 255);
     textSize(40); // 放大結束標題
     text("挑戰成功！", pX + pW / 2, pY + pH / 2 - 20);
   } else {
@@ -412,7 +489,7 @@ function drawEndScreen(pX, pY, pW, pH) {
   text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
 
   if (isHovering) {
-    fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+    fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
     rect(btnX, btnY, btnW, btnH, 5);
     fill(0);
     textSize(16);
@@ -432,11 +509,11 @@ function drawEndScreen(pX, pY, pW, pH) {
     }
   } else {
     noFill();
-    stroke(0, 255, 100);
+    stroke(0, 200, 255);
     strokeWeight(2);
     rect(btnX, btnY, btnW, btnH, 5);
     noStroke();
-    fill(0, 255, 100);
+    fill(0, 200, 255);
     textSize(16);
     text("回主選單", pX + pW / 2, btnY + 22);
     confirmTimer = Math.max(0, confirmTimer - 2);
@@ -577,9 +654,9 @@ function runGameOne(pX, pY, pW, pH) {
       if (items[i].type === "cheese") {
         score += 10; 
         if (score >= 100) gameState = "win"; // 滿百分勝利
-        // 綠色閃爍效果
+        // 水藍色閃爍效果
         push();
-        fill(0, 255, 0, 100);
+        fill(0, 200, 255, 100);
         rect(pX, pY, pW, pH);
         pop();
       } else {
@@ -599,7 +676,7 @@ function runGameOne(pX, pY, pW, pH) {
   }
 
   // D. 顯示分數與標題
-  fill(0, 255, 100);
+  fill(0, 200, 255);
   textSize(14);
   textAlign(LEFT, TOP);
   text("獎勵積分: " + score, pX + 10, pY + 10);
@@ -617,7 +694,7 @@ function runGameOne(pX, pY, pW, pH) {
 
   // 手部游標輔助
   noFill();
-  stroke(0, 255, 100);
+  stroke(0, 200, 255);
   ellipse(mouseX_pos, mouseY_pos, 25, 25);
 }
 
@@ -654,7 +731,7 @@ class MemoryCard {
       offsetY = -sin(map(this.matchAnimTimer, 40, 0, 0, PI)) * 40;
       // 發光效果：利用原生 Canvas 陰影 API
       drawingContext.shadowBlur = 30;
-      drawingContext.shadowColor = "rgba(0, 255, 100, 1)";
+      drawingContext.shadowColor = "rgba(0, 200, 255, 1)";
       drawingContext.shadowOffsetY = 0;
       this.matchAnimTimer--; // 更新計時器
     } else {
@@ -673,7 +750,7 @@ class MemoryCard {
     let popScale = 1.0 + flipProgress * 0.15; // 最高放大 15%
     scale(abs(this.scaleX) * popScale, popScale); 
 
-    stroke(0, 255, 100);
+    stroke(0, 200, 255);
     strokeWeight(2);
     
     if (this.scaleX < 0) { // 當縮放值過中點，顯示正面
@@ -762,7 +839,7 @@ function runGameTwo(pX, pY, pW, pH) {
     stroke(255, 0, 0);
     ellipse(mouseX_pos, mouseY_pos, 25, 25);
   } else {
-    fill(0, 255, 100);
+    fill(0, 200, 255);
     noStroke();
     ellipse(mouseX_pos, mouseY_pos, 20, 20);
   }
@@ -787,7 +864,7 @@ function runGameTwo(pX, pY, pW, pH) {
   }
 
   // E. 介面文字
-  fill(0, 255, 100);
+  fill(0, 200, 255);
   textSize(14);
   textAlign(CENTER, TOP);
   text("認知主義：完成所有配對", pX + pW/2, pY + 10);
@@ -804,7 +881,7 @@ function runGameTwo(pX, pY, pW, pH) {
   let progressY = pY + pH - 45;
 
   // 進度條外框
-  stroke(0, 255, 100);
+  stroke(0, 200, 255);
   strokeWeight(1);
   noFill();
   rect(progressX, progressY, progressW, progressH, 6);
@@ -812,11 +889,11 @@ function runGameTwo(pX, pY, pW, pH) {
   // 填充進度 (根據 matchCount，總共需配對 3 對)
   let fillW = map(matchCount, 0, 3, 0, progressW);
   noStroke();
-  fill(0, 255, 100, 200);
+  fill(0, 200, 255, 200);
   rect(progressX, progressY, fillW, progressH, 6);
 
   // 百分比文字
-  fill(0, 255, 100);
+  fill(0, 200, 255);
   textSize(10);
   textAlign(CENTER, BOTTOM);
   let percent = floor((matchCount / 3) * 100);
@@ -1034,7 +1111,7 @@ function runGameThree(pX, pY, pW, pH) {
   }
 
   // F. 介面文字
-  fill(0, 255, 100);
+  fill(0, 200, 255);
   textSize(24);
   textAlign(CENTER, TOP);
   text("建構主義：堆疊 4 個知識積木", pX + pW/2, pY + 20);
@@ -1050,7 +1127,7 @@ function runGameThree(pX, pY, pW, pH) {
 
   // 繪製手部游標 (空手或積木掉落中)
   if (heldBlock === null || heldBlock.isFalling) {
-    fill(isPinching ? color(255, 0, 0) : color(0, 255, 100));
+    fill(isPinching ? color(255, 0, 0) : color(0, 200, 255));
     noStroke();
     ellipse(mouseX_pos, mouseY_pos, isPinching ? 15 : 20, isPinching ? 15 : 20);
   }
@@ -1093,7 +1170,8 @@ function handleMenuSelection(pX, pY, pW, pH) {
 function drawBootScreen(pX, pY, pW, pH) {
   // 封面不需要攝影機，只保留呼吸感遮罩與手部游標
   push();
-  fill(20, 15, 30, 150 + sin(frameCount * 0.05) * 50);
+  image(bootBg, pX, pY, pW, pH); // 顯示 2.png 背景
+  fill(20, 15, 30, 210 + sin(frameCount * 0.05) * 40); // 加深遮罩透明度，讓文字更清晰
   rect(pX, pY, pW, pH);
   pop();
 
@@ -1107,7 +1185,7 @@ function drawBootScreen(pX, pY, pW, pH) {
 
   push();
   textAlign(CENTER, CENTER);
-  fill(0, 255, 100);
+  fill(0, 200, 255);
   textSize(60); // 放大全螢幕標題
   text("教育心理學博物館", pX + pW / 2, pY + pH * 0.35);
   
@@ -1127,7 +1205,7 @@ function drawBootScreen(pX, pY, pW, pH) {
   text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
 
   if (isHovering) {
-    fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+    fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
     rect(btnX, btnY, btnW, btnH, 10);
     fill(0);
     textSize(24);
@@ -1147,11 +1225,11 @@ function drawBootScreen(pX, pY, pW, pH) {
     }
   } else {
     noFill();
-    stroke(0, 255, 100);
+    stroke(0, 200, 255);
     strokeWeight(2);
     rect(btnX, btnY, btnW, btnH, 10);
     noStroke();
-    fill(0, 255, 100);
+    fill(0, 200, 255);
     textSize(24);
     text("進入機台", pX + pW / 2, btnY + 30);
     confirmTimer = Math.max(0, confirmTimer - 2);
@@ -1180,7 +1258,7 @@ function drawMenu(pX, pY, pW, pH) {
     text("尚未偵測到手部，請將手移入畫面", pX + pW/2, pY + 60);
   }
 
-  fill(0, 255, 100);
+  fill(0, 200, 255);
   textAlign(CENTER, TOP);
   textSize(32); // 放大選單標題
   text("選擇學習關卡", pX + pW/2, pY + 30);
@@ -1193,7 +1271,7 @@ function drawMenu(pX, pY, pW, pH) {
     if (i === menuSelection) {
       // 選中效果
       // 呼吸燈閃爍效果：利用 sin 函數讓透明度在 100 到 200 之間變化
-      fill(0, 255, 100, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+      fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
       rect(pX + 20, itemY, pW - 40, 50, 5); // 加高選中框
       
       // 繪製蓄力進度條
@@ -1207,11 +1285,11 @@ function drawMenu(pX, pY, pW, pH) {
       text("> " + menuItems[i] + " <", pX + pW/2, itemY + 14);
     } else {
       // 未選中效果
-      stroke(0, 255, 100);
+      stroke(0, 200, 255);
       noFill();
       rect(pX + 20, itemY, pW - 40, 50, 5); // 加高未選中框
       noStroke();
-      fill(0, 255, 100);
+      fill(0, 200, 255);
       text(menuItems[i], pX + pW/2, itemY + 14);
     }
   }
