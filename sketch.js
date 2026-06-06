@@ -1,5 +1,11 @@
 // === 全域變數宣告 ===
 let bgMusic;            // 背景音樂變數
+let cheerSound;         // 全破歡呼音效
+let beepSound;          // 游標懸停/切換選項滴答音效
+let confirmSound;       // 按下/確認選項音效
+let prevMenuSelection = 0;  // 追蹤主選單切換，避免重複播放
+let globalHoverState = "";  // 追蹤各畫面的按鈕懸停狀態
+let hasCheered = false; // 紀錄是否已經播放過歡呼音效
 let currentScene = -1;  // -1: 起始畫面, 0: 主選單, 1: 遊戲一, 2: 遊戲二, 3: 遊戲三
 let mouseX_pos = 0;     // PoseNet 平滑後的 X (需在你的 PoseNet 邏輯中更新)
 let mouseY_pos = 0;     // PoseNet 平滑後的 Y
@@ -23,14 +29,15 @@ let cheatTimer = 0; // 用於控制「CHEAT ACTIVATED!」跑馬燈的計時器
 let isHandOpen = false; 
 let isHandOpenPrev = false; // 用於偵測「剛張開」的瞬間
 let menuSelection = 0;   // 0: 行為, 1: 認知, 2: 建構
-let achievements = [false, false, false]; // 追蹤三個關卡的通關狀態 (闖關成就)
-let bestTimes = [null, null, null]; // 追蹤三個關卡的最快通關時間
+let achievements = [false, false, false, false]; // 追蹤四個關卡的通關狀態 (闖關成就)
+let bestTimes = [null, null, null, null]; // 追蹤四個關卡的最快通關時間
 
 let confirmTimer = 0;    // 確認進度計時器
 let confirmThreshold = 90; // 延長確認時間，需要張開手維持約 1.5 秒
 
 // === 遊戲狀態與計時器 ===
 let gameState = "playing"; // playing, win, lose, intro
+let prevGameState = "playing"; // 新增：追蹤上一幀的狀態，用於觸發音量漸變
 let countdown = 0;
 let lastTimerTick = 0;
 
@@ -76,6 +83,11 @@ function preload() {
   bootBg = loadImage('2.png');
   // 預先載入背景音樂
   bgMusic = loadSound('music.mp3');
+  // 預先載入全破歡呼音效
+  cheerSound = loadSound('cheer.mp3');
+  // 預先載入選單與確認音效
+  beepSound = loadSound('beep.mp3');
+  confirmSound = loadSound('confirm.mp3');
 }
 
 function setup() {
@@ -86,6 +98,27 @@ function setup() {
   bgMusic.setVolume(0.4); // 設定音量 (0.0 ~ 1.0)
   bgMusic.loop();         // 設定循環播放
   
+  // 調整 UI 音效音量 (將懸停滴答聲調小，避免太吵)
+  if (beepSound) beepSound.setVolume(0.15); 
+  if (confirmSound) confirmSound.setVolume(0.4);
+
+  // 嘗試從 sessionStorage 讀取進度 (為了從第四關返回時保留紀錄)
+  let savedAchievements = sessionStorage.getItem('edu_achievements');
+  if (savedAchievements) achievements = JSON.parse(savedAchievements);
+  let savedBestTimes = sessionStorage.getItem('edu_bestTimes');
+  if (savedBestTimes) bestTimes = JSON.parse(savedBestTimes);
+
+  // 如果是從第四關回來，觸發第四關的通關蓋章動畫
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('from') === 'level4') {
+    currentScene = 4; // 進入結算畫面
+    gameState = "win";
+    stampAnimTimer = 60; // 觸發蓋章動畫
+    achievements[3] = true;
+    sessionStorage.setItem('edu_achievements', JSON.stringify(achievements)); // 儲存進度
+    window.history.replaceState({}, document.title, window.location.pathname); // 清除網址參數
+  }
+
   // 初始化攝像頭
   video = createCapture(VIDEO);
   video.size(640, 480); // 建議固定辨識解析度以增進效能
@@ -242,8 +275,8 @@ function draw() {
     pop();
   }
 
-  // 確認是否達成大師成就 (三個關卡皆通過)
-  let isMaster = achievements[0] && achievements[1] && achievements[2];
+  // 確認是否達成大師成就 (四個關卡皆通過)
+  let isMaster = achievements[0] && achievements[1] && achievements[2] && achievements[3];
 
   noStroke();
   if (isMaster) {
@@ -275,6 +308,42 @@ function draw() {
   // === 3. 頂部：復古卡帶插槽 ===
   fill(30, 30, 35);
   rect(width / 2 - 180, consoleY + 15, 360, 20, 5);
+
+  // --- 新增：頂部右側 手勢狀態小面板 ---
+  push();
+  let statusW = 100;
+  let statusH = 24;
+  let statusX = consoleX + consoleW - statusW - 20; // 靠右對齊
+  let statusY = consoleY + 13;
+
+  // 畫一個小小的電子螢幕邊框
+  fill(15, 15, 20);
+  stroke(40, 45, 55);
+  strokeWeight(2);
+  rect(statusX, statusY, statusW, statusH, 4);
+
+  // 判斷當前手勢狀態與對應顏色
+  let statusText = "❌ 未偵測";
+  let statusColor = color(255, 50, 50); // 紅色警示
+  if (!modelLoaded) {
+    statusText = "⏳ 載入中";
+    statusColor = color(150, 150, 150);
+  } else if (predictions.length > 0) {
+    if (isPinching) { statusText = "🤏 捏合中"; statusColor = color(255, 200, 0); }
+    else if (isThumbsUp) { statusText = "👍 密技"; statusColor = color(255, 100, 200); }
+    else if (isHandOpen) { statusText = "🖐 張開"; statusColor = color(0, 200, 255); }
+    else { statusText = "✋ 追蹤中"; statusColor = color(0, 255, 100); }
+  }
+
+  noStroke();
+  fill(statusColor);
+  drawingContext.shadowBlur = 8; // 狀態文字發光特效
+  drawingContext.shadowColor = statusColor.toString();
+  textSize(12);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  text(statusText, statusX + statusW / 2, statusY + statusH / 2 + 1); // +1 微調垂直置中
+  pop();
 
   // === 4. 中央：復古遊戲螢幕外框 ===
   let screenW = consoleW * 0.65;
@@ -358,16 +427,23 @@ function draw() {
       
       // 選單互動邏輯：擴大感應區，並根據是否全破動態決定選項數量
       let menuY = constrain(mouseY_pos, height * 0.25, height * 0.75);
-      let allClear = achievements[0] && achievements[1] && achievements[2];
+      let allClear = achievements[0] && achievements[1] && achievements[2] && achievements[3];
       let menuCount = allClear ? 5 : 4; // 如果全破會有 5 個選項，否則為 4 個
       menuSelection = floor(map(menuY, height * 0.25, height * 0.75, 0, menuCount));
       menuSelection = constrain(menuSelection, 0, menuCount - 1);
+
+      // --- 新增：主選單選項切換音效 ---
+      if (menuSelection !== prevMenuSelection) {
+        if (beepSound && beepSound.isLoaded()) beepSound.play();
+        prevMenuSelection = menuSelection;
+      }
 
       // --- 優化：蓄力確認機制 (改為捏合) ---
       let isActionTriggered = (isPinching && modelLoaded && predictions.length > 0);
       if (isActionTriggered) {
         confirmTimer++;
         if (confirmTimer >= confirmThreshold) {
+          if (confirmSound && confirmSound.isLoaded()) confirmSound.play(); // 播放確認音效
           handleMenuSelection(playAreaX, playAreaY, playAreaW, playAreaH);
           confirmTimer = 0; // 觸發後重置
         }
@@ -385,6 +461,10 @@ function draw() {
       break;
     case 3:
       runGameThree(playAreaX, playAreaY, playAreaW, playAreaH);
+      break;
+    case 4:
+      // 為了顯示第四關蓋章動畫而建立的空場景
+      drawEndScreen(playAreaX, playAreaY, playAreaW, playAreaH);
       break;
   }
 
@@ -601,6 +681,14 @@ function draw() {
   }
 
   pop(); // 結束震動效果的作用範圍
+
+  // --- 新增：背景音樂自動漸變邏輯 ---
+  if (gameState === "paused" && prevGameState !== "paused") {
+    if (bgMusic) bgMusic.setVolume(0.1, 0.5); // 進入暫停：0.5 秒內平滑降至 0.1 音量
+  } else if (gameState !== "paused" && prevGameState === "paused") {
+    if (bgMusic) bgMusic.setVolume(0.4, 0.5); // 解除暫停：0.5 秒內平滑恢復至預設 0.4 音量
+  }
+  prevGameState = gameState; // 紀錄當前狀態供下一影格比較
 }
 
 // --- 核心：更新倒數計時 ---
@@ -619,29 +707,64 @@ function updateCountdown() {
 // --- 核心：繪製關卡介紹畫面 ---
 function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   push();
-  fill(0, 220); // 深色背景遮罩
+  
+  // 定義不同關卡的專屬主題色
+  let themeR = 0, themeG = 200, themeB = 255; // 預設水藍色
+  let bgTop = "rgba(10, 15, 30, 0.85)", bgMid = "rgba(15, 25, 45, 0.9)", bgBot = "rgba(20, 40, 65, 0.95)";
+  
+  if (currentScene === 1) { // 行為主義：紅色調
+    themeR = 255; themeG = 80; themeB = 80;
+    bgTop = "rgba(30, 10, 10, 0.85)"; bgMid = "rgba(45, 15, 15, 0.9)"; bgBot = "rgba(65, 20, 20, 0.95)";
+  } else if (currentScene === 2) { // 認知主義：紫色調
+    themeR = 180; themeG = 80; themeB = 255;
+    bgTop = "rgba(20, 10, 30, 0.85)"; bgMid = "rgba(30, 15, 45, 0.9)"; bgBot = "rgba(45, 20, 65, 0.95)";
+  } else if (currentScene === 3) { // 建構主義：綠色調
+    themeR = 80; themeG = 255; themeB = 150;
+    bgTop = "rgba(10, 25, 15, 0.85)"; bgMid = "rgba(15, 40, 20, 0.9)"; bgBot = "rgba(20, 60, 30, 0.95)";
+  }
+
+  // 1. 繪製專屬主題色科技感漸層背景
+  let bgGradient = drawingContext.createLinearGradient(pX, pY, pX, pY + pH);
+  bgGradient.addColorStop(0, bgTop);
+  bgGradient.addColorStop(0.5, bgMid);
+  bgGradient.addColorStop(1, bgBot);
+  drawingContext.fillStyle = bgGradient;
   noStroke();
   rect(pX, pY, pW, pH);
+
+  // 2. 繪製動態復古網格 (Retro Grid)
+  push();
+  stroke(themeR, themeG, themeB, 25); // 使用專屬主題色的半透明網格
+  strokeWeight(1);
+  let gridSize = 30;
+  let offset = (frameCount * 0.5) % gridSize; // 讓水平線緩慢向下移動
+  for (let x = pX + gridSize / 2; x < pX + pW; x += gridSize) {
+    line(x, pY, x, pY + pH);
+  }
+  for (let y = pY + offset; y < pY + pH; y += gridSize) {
+    line(pX, y, pX + pW, y);
+  }
+  pop();
 
   // --- 新增：閃爍像素裝飾 ---
   // 1. 隨機像素點點，營造電子雜訊感
   for (let i = 0; i < 20; i++) {
     // 利用 frameCount 做簡單的頻率控制，讓點點看起來在閃動
     if (frameCount % 10 < 5) {
-      fill(0, 200, 255, random(50, 150));
+      fill(themeR, themeG, themeB, random(50, 150));
       rect(random(pX, pX + pW), random(pY, pY + pH), 4, 4);
     }
   }
 
   // 2. 復古電子感呼吸邊框 (利用 sin 讓透明度產生律動)
-  stroke(0, 200, 255, 150 + sin(frameCount * 0.1) * 100);
+  stroke(themeR, themeG, themeB, 150 + sin(frameCount * 0.1) * 100);
   strokeWeight(2);
   noFill();
   rect(pX + 5, pY + 5, pW - 10, pH - 10, 2);
   noStroke();
   
   textAlign(CENTER, CENTER);
-  fill(0, 200, 255);
+  fill(themeR, themeG, themeB);
   textSize(32); // 放大標題
   text(title, pX + pW / 2, pY + pH * 0.2);
   
@@ -654,9 +777,9 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   textStyle(NORMAL);
   textSize(15); // 放大理論文字
   fill(200, 200, 255);
-  textAlign(LEFT, TOP); // 將段落對齊方式設為左上
-  textLeading(22); // 增加行距，增進閱讀體驗
-  text(theory, pX + 40, pY + pH * 0.50, pW - 80, pH * 0.25); // 明確給予寬度與高度邊界，防止溢出
+  textAlign(CENTER, TOP); // 修改：統一置中對齊，讓排版更和諧
+  textLeading(26); // 加大行距，讓置中後的文字不擁擠
+  text(theory, pX + 40, pY + pH * 0.50, pW - 80); // 移除高度限制，只給予寬度邊界自動換行，防止被裁切
   textAlign(CENTER, CENTER); // 恢復原本的置中對齊，以免影響後續的按鈕文字
 
   // --- 優化：提供「返回選單」與「開始挑戰」兩個按鈕 ---
@@ -670,19 +793,26 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   let hover1 = mouseX_pos > btnX1 && mouseX_pos < btnX1 + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
   let hover2 = mouseX_pos > btnX2 && mouseX_pos < btnX2 + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
 
+  // --- 新增：按鈕懸停音效 ---
+  let currentHover = hover1 ? "intro_btn1" : (hover2 ? "intro_btn2" : "");
+  if (currentHover !== globalHoverState) {
+    if (currentHover !== "" && beepSound && beepSound.isLoaded()) beepSound.play();
+    globalHoverState = currentHover;
+  }
+
   fill(255, 200, 0);
   textSize(14);
   text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
 
   let drawBtn = (x, y, w, h, label, isHovering) => {
     if (isHovering) {
-      fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+      fill(themeR, themeG, themeB, map(sin(frameCount * 0.1), -1, 1, 100, 200));
       rect(x, y, w, h, 5);
       fill(0); textSize(16); text(label, x + w / 2, y + h / 2);
     } else {
-      noFill(); stroke(0, 200, 255); strokeWeight(2);
+      noFill(); stroke(themeR, themeG, themeB); strokeWeight(2);
       rect(x, y, w, h, 5);
-      noStroke(); fill(0, 200, 255); textSize(16); text(label, x + w / 2, y + h / 2);
+      noStroke(); fill(themeR, themeG, themeB); textSize(16); text(label, x + w / 2, y + h / 2);
     }
   };
 
@@ -699,6 +829,7 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
       if (hover2) rect(btnX2 + 5, btnY + btnH - 10, barW, 6);
 
       if (confirmTimer >= confirmThreshold) {
+        if (confirmSound && confirmSound.isLoaded()) confirmSound.play(); // 播放確認音效
         if (hover1) {
           currentScene = 0; // 返回主選單
         }
@@ -748,11 +879,46 @@ function drawStamp(x, y, label, scaleFactor, alpha) {
 // --- 核心：繪製結束畫面 ---
 function drawEndScreen(pX, pY, pW, pH) {
   push();
-  fill(0, 180);
+  
+  // 定義不同關卡的專屬主題色
+  let themeR = 0, themeG = 200, themeB = 255; // 預設水藍色
+  let bgTop = "rgba(10, 15, 30, 0.85)", bgMid = "rgba(15, 25, 45, 0.9)", bgBot = "rgba(20, 40, 65, 0.95)";
+  
+  if (currentScene === 1) { // 行為主義：紅色調
+    themeR = 255; themeG = 80; themeB = 80;
+    bgTop = "rgba(30, 10, 10, 0.85)"; bgMid = "rgba(45, 15, 15, 0.9)"; bgBot = "rgba(65, 20, 20, 0.95)";
+  } else if (currentScene === 2) { // 認知主義：紫色調
+    themeR = 180; themeG = 80; themeB = 255;
+    bgTop = "rgba(20, 10, 30, 0.85)"; bgMid = "rgba(30, 15, 45, 0.9)"; bgBot = "rgba(45, 20, 65, 0.95)";
+  } else if (currentScene === 3) { // 建構主義：綠色調
+    themeR = 80; themeG = 255; themeB = 150;
+    bgTop = "rgba(10, 25, 15, 0.85)"; bgMid = "rgba(15, 40, 20, 0.9)"; bgBot = "rgba(20, 60, 30, 0.95)";
+  }
+
+  // 1. 繪製專屬主題色科技感漸層背景
+  let bgGradient = drawingContext.createLinearGradient(pX, pY, pX, pY + pH);
+  bgGradient.addColorStop(0, bgTop);
+  bgGradient.addColorStop(0.5, bgMid);
+  bgGradient.addColorStop(1, bgBot);
+  drawingContext.fillStyle = bgGradient;
   noStroke();
   rect(pX, pY, pW, pH);
+
+  // 2. 繪製動態復古網格 (Retro Grid)
+  push();
+  stroke(themeR, themeG, themeB, 25); // 使用專屬主題色的半透明網格
+  strokeWeight(1);
+  let gridSize = 30;
+  let offset = (frameCount * 0.5) % gridSize; // 讓水平線緩慢向下移動
+  for (let x = pX + gridSize / 2; x < pX + pW; x += gridSize) {
+    line(x, pY, x, pY + pH);
+  }
+  for (let y = pY + offset; y < pY + pH; y += gridSize) {
+    line(pX, y, pX + pW, y);
+  }
+  pop();
   
-  let allClear = achievements[0] && achievements[1] && achievements[2];
+  let allClear = achievements[0] && achievements[1] && achievements[2] && achievements[3];
 
   textAlign(CENTER, CENTER);
   if (gameState === "win") {
@@ -766,10 +932,10 @@ function drawEndScreen(pX, pY, pW, pH) {
     textSize(24);
     text("- 學習集章卡 -", pX + pW / 2, pY + pH * 0.28);
 
-    // 繪製三個集章格子
-    let labels = ["行為制約", "訊息處理", "知識建構"];
-    for (let i = 0; i < 3; i++) {
-      let slotX = pX + pW * 0.25 + i * (pW * 0.25);
+    // 繪製四個集章格子
+    let labels = ["行為制約", "訊息處理", "知識建構", "3D 互動"];
+    for (let i = 0; i < 4; i++) {
+      let slotX = pX + pW * 0.2 + i * (pW * 0.2);
       let slotY = pY + pH * 0.48;
       
       // 空的蓋章虛線框
@@ -784,6 +950,16 @@ function drawEndScreen(pX, pY, pW, pH) {
       fill(150, 130, 110);
       textSize(12);
       text(labels[i], slotX, slotY + 45);
+
+      // --- 新增：顯示各關卡通關時間 ---
+      if (achievements[i]) {
+        fill(80, 140, 80); // 復古深綠色，搭配紙張底色
+        if (bestTimes[i] !== null) {
+          text(`🕒 ${bestTimes[i]} 秒`, slotX, slotY + 62);
+        } else if (i === 3) {
+          text(`🌟 探索完成`, slotX, slotY + 62); // 第四關為體驗性質，無計時
+        }
+      }
 
       // 動態蓋章特效邏輯
       if (achievements[i]) {
@@ -806,11 +982,29 @@ function drawEndScreen(pX, pY, pW, pH) {
 
     // --- 標題文字與全破紙花特效 ---
     if (allClear && stampAnimTimer <= 0) {
+      // 播放全破歡呼音效 (只播放一次)
+      if (!hasCheered && cheerSound && cheerSound.isLoaded()) {
+        cheerSound.play();
+        hasCheered = true; // 確保只播放一次
+      }
+
       drawingContext.shadowBlur = 20;
       drawingContext.shadowColor = "rgba(255, 200, 0, 1)";
       fill(255, 210, 0);
       textSize(36);
       text("🏆 教育心理學大師 通關！ 🏆", pX + pW / 2, pY + pH * 0.12);
+      
+      // --- 新增：計算並顯示總通關時間 ---
+      let totalTime = 0;
+      for (let t of bestTimes) {
+        if (t !== null) totalTime += t;
+      }
+      
+      drawingContext.shadowBlur = 10;
+      drawingContext.shadowColor = "rgba(0, 200, 255, 1)";
+      fill(200, 240, 255);
+      textSize(18);
+      text(`🎉 總共花費時間：${totalTime} 秒 🎉`, pX + pW / 2, pY + pH * 0.20);
       drawingContext.shadowBlur = 0;
       
       // 8-bit 風格瘋狂灑紙花
@@ -819,7 +1013,7 @@ function drawEndScreen(pX, pY, pW, pH) {
         rect(pX + random(pW), pY + random(pH * 0.8), 8, 8);
       }
     } else {
-      fill(0, 200, 255);
+      fill(themeR, themeG, themeB);
       textSize(32);
       text("關卡完成！獲得一枚印章", pX + pW / 2, pY + pH * 0.12);
     }
@@ -840,13 +1034,20 @@ function drawEndScreen(pX, pY, pW, pH) {
     let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW &&
                      mouseY_pos > btnY && mouseY_pos < btnY + btnH;
 
+    // --- 新增：按鈕懸停音效 ---
+    let currentHover = isHovering ? "end_btn" : "";
+    if (currentHover !== globalHoverState) {
+      if (currentHover !== "" && beepSound && beepSound.isLoaded()) beepSound.play();
+      globalHoverState = currentHover;
+    }
+
     fill(255, 200, 0);
     textSize(14);
     noStroke();
     text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
 
     if (isHovering) {
-      fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+      fill(themeR, themeG, themeB, map(sin(frameCount * 0.1), -1, 1, 100, 200));
       rect(btnX, btnY, btnW, btnH, 5);
       fill(0);
       textSize(16);
@@ -859,6 +1060,7 @@ function drawEndScreen(pX, pY, pW, pH) {
         let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
         rect(btnX + 5, btnY + btnH - 10, barW, 6);
         if (confirmTimer >= confirmThreshold) {
+          if (confirmSound && confirmSound.isLoaded()) confirmSound.play(); // 播放確認音效
           currentScene = 0;
           confirmTimer = 0;
         }
@@ -867,11 +1069,11 @@ function drawEndScreen(pX, pY, pW, pH) {
       }
     } else {
       noFill();
-      stroke(0, 200, 255);
+      stroke(themeR, themeG, themeB);
       strokeWeight(2);
       rect(btnX, btnY, btnW, btnH, 5);
       noStroke();
-      fill(0, 200, 255);
+      fill(themeR, themeG, themeB);
       textSize(16);
       text(allClear ? "領取大師稱號" : "回主選單", pX + pW / 2, btnY + 22);
       confirmTimer = Math.max(0, confirmTimer - 2);
@@ -883,14 +1085,55 @@ function drawEndScreen(pX, pY, pW, pH) {
 // --- 核心：繪製暫停畫面 ---
 function drawPauseScreen(pX, pY, pW, pH) {
   push();
-  fill(0, 180); // 半透明黑色遮罩
+  
+  // 定義不同關卡的專屬主題色
+  let themeR = 0, themeG = 200, themeB = 255; // 預設水藍色
+  let bgTop = "rgba(10, 15, 30, 0.85)", bgMid = "rgba(15, 25, 45, 0.9)", bgBot = "rgba(20, 40, 65, 0.95)";
+  
+  if (currentScene === 1) { // 行為主義：紅色調
+    themeR = 255; themeG = 80; themeB = 80;
+    bgTop = "rgba(30, 10, 10, 0.85)"; bgMid = "rgba(45, 15, 15, 0.9)"; bgBot = "rgba(65, 20, 20, 0.95)";
+  } else if (currentScene === 2) { // 認知主義：紫色調
+    themeR = 180; themeG = 80; themeB = 255;
+    bgTop = "rgba(20, 10, 30, 0.85)"; bgMid = "rgba(30, 15, 45, 0.9)"; bgBot = "rgba(45, 20, 65, 0.95)";
+  } else if (currentScene === 3) { // 建構主義：綠色調
+    themeR = 80; themeG = 255; themeB = 150;
+    bgTop = "rgba(10, 25, 15, 0.85)"; bgMid = "rgba(15, 40, 20, 0.9)"; bgBot = "rgba(20, 60, 30, 0.95)";
+  }
+
+  // 1. 繪製專屬主題色科技感漸層背景
+  let bgGradient = drawingContext.createLinearGradient(pX, pY, pX, pY + pH);
+  bgGradient.addColorStop(0, bgTop);
+  bgGradient.addColorStop(0.5, bgMid);
+  bgGradient.addColorStop(1, bgBot);
+  drawingContext.fillStyle = bgGradient;
   noStroke();
   rect(pX, pY, pW, pH);
 
+  // 2. 繪製動態復古網格 (Retro Grid)
+  push();
+  stroke(themeR, themeG, themeB, 25); // 使用專屬主題色的半透明網格
+  strokeWeight(1);
+  let gridSize = 30;
+  let offset = (frameCount * 0.5) % gridSize; // 讓水平線緩慢向下移動
+  for (let x = pX + gridSize / 2; x < pX + pW; x += gridSize) {
+    line(x, pY, x, pY + pH);
+  }
+  for (let y = pY + offset; y < pY + pH; y += gridSize) {
+    line(pX, y, pX + pW, y);
+  }
+  pop();
+
   textAlign(CENTER, CENTER);
-  fill(0, 200, 255);
+  
+  // 新增：暫停標題的呼吸發光特效
+  drawingContext.shadowBlur = 20 + sin(frameCount * 0.1) * 15;
+  drawingContext.shadowColor = `rgba(${themeR}, ${themeG}, ${themeB}, 1)`;
+  fill(themeR, themeG, themeB);
   textSize(40);
   text("遊戲暫停", pX + pW / 2, pY + pH * 0.35);
+  
+  drawingContext.shadowBlur = 0; // 關閉發光效果，避免影響下方的按鈕繪製
 
   // 調整為三個按鈕的佈局
   let btnW = 130;
@@ -905,6 +1148,13 @@ function drawPauseScreen(pX, pY, pW, pH) {
   let hover2 = mouseX_pos > btnX2 && mouseX_pos < btnX2 + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
   let hover3 = mouseX_pos > btnX3 && mouseX_pos < btnX3 + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
 
+  // --- 新增：按鈕懸停音效 ---
+  let currentHover = hover1 ? "pause_btn1" : (hover2 ? "pause_btn2" : (hover3 ? "pause_btn3" : ""));
+  if (currentHover !== globalHoverState) {
+    if (currentHover !== "" && beepSound && beepSound.isLoaded()) beepSound.play();
+    globalHoverState = currentHover;
+  }
+
   fill(255, 200, 0);
   textSize(14);
   text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
@@ -912,13 +1162,13 @@ function drawPauseScreen(pX, pY, pW, pH) {
   // 繪製三個按鈕
   let drawBtn = (x, y, w, h, label, isHovering) => {
     if (isHovering) {
-      fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+      fill(themeR, themeG, themeB, map(sin(frameCount * 0.1), -1, 1, 100, 200));
       rect(x, y, w, h, 5);
       fill(0); textSize(16); text(label, x + w / 2, y + h / 2);
     } else {
-      noFill(); stroke(0, 200, 255); strokeWeight(2);
+      noFill(); stroke(themeR, themeG, themeB); strokeWeight(2);
       rect(x, y, w, h, 5);
-      noStroke(); fill(0, 200, 255); textSize(16); text(label, x + w / 2, y + h / 2);
+      noStroke(); fill(themeR, themeG, themeB); textSize(16); text(label, x + w / 2, y + h / 2);
     }
   };
   drawBtn(btnX1, btnY, btnW, btnH, "繼續遊戲", hover1);
@@ -937,6 +1187,7 @@ function drawPauseScreen(pX, pY, pW, pH) {
       if (hover3) rect(btnX3 + 5, btnY + btnH - 10, barW, 6);
 
       if (confirmTimer >= confirmThreshold) {
+        if (confirmSound && confirmSound.isLoaded()) confirmSound.play(); // 播放確認音效
         if (hover1) { 
           gameState = "playing"; 
           lastTimerTick = millis(); 
@@ -1007,7 +1258,7 @@ class FallingItem {
 // --- 遊戲一：核心邏輯 Function ---
 function runGameOne(pX, pY, pW, pH) {
   if (gameState === "intro") {
-    let theoryText = "理論背景：斯金納的操作制約。行為是透過「正增強」（起司獎勵）與「懲罰」（電擊）來形塑的。當行為產生積極結果時，該行為在未來發生的機率就會增加。";
+    let theoryText = "理論背景：斯金納的操作制約。\n行為是透過「正增強」（起司獎勵）與「懲罰」（電擊）來形塑的。\n當行為產生積極結果時，該行為在未來發生的機率就會增加。";
     drawIntroScreen("行為主義", 
                     "吃到起司獲得 100 分 (扣至 -50 則失敗)。", 
                     "移動手勢控制老鼠位置。", 
@@ -1401,7 +1652,7 @@ class MemoryCard {
 // --- 遊戲二：核心邏輯 Function ---
 function runGameTwo(pX, pY, pW, pH) {
   if (gameState === "intro") {
-    let theoryText = "理論背景：訊息處理論。學習涉及訊息的編碼、儲存與檢索。配對相同卡片的過程模擬了大腦如何辨識特徵，並將短期記憶中的資訊與長期記憶中的既有架構進行聯結。";
+    let theoryText = "理論背景：訊息處理論。\n學習涉及訊息的編碼、儲存與檢索。\n配對相同卡片的過程模擬了大腦如何辨識特徵，\n並將短期記憶中的資訊與長期記憶中的既有架構進行聯結。";
     drawIntroScreen("認知主義", 
                     "配對所有卡片以完成資訊編碼 (翻錯 3 次失敗)。", 
                     "捏合手勢進行翻牌。", 
@@ -1827,7 +2078,12 @@ function runGameThree(pX, pY, pW, pH) {
       winAnimTimer = 90;
       achievements[2] = true;
       let timeSpent = 60 - countdown;
-      if (bestTimes[2] === null || timeSpent < bestTimes[2]) bestTimes[2] = timeSpent;
+      if (bestTimes[2] === null || timeSpent < bestTimes[2]) {
+        bestTimes[2] = timeSpent;
+        isNewRecord = true;
+      } else {
+        isNewRecord = false;
+      }
     }
   }
 
@@ -2021,7 +2277,12 @@ function runGameThree(pX, pY, pW, pH) {
     winAnimTimer = 90; // 設定 1.5 秒光柱升起動畫
     achievements[2] = true; // 解鎖建構主義成就
     let timeSpent = 60 - countdown; // 計算花費時間
-    if (bestTimes[2] === null || timeSpent < bestTimes[2]) bestTimes[2] = timeSpent;
+    if (bestTimes[2] === null || timeSpent < bestTimes[2]) {
+      bestTimes[2] = timeSpent;
+      isNewRecord = true;
+    } else {
+      isNewRecord = false;
+    }
   }
 
   if (gameState === "paused") {
@@ -2061,15 +2322,22 @@ function handleMenuSelection(pX, pY, pW, pH) {
     gameState = "intro";
     winAnimTimer = 0; // 重置光柱動畫計時器
   } else if (menuSelection === 3) {
+    // 將目前進度存入 sessionStorage，避免跳轉後遺失
+    sessionStorage.setItem('edu_achievements', JSON.stringify(achievements));
+    sessionStorage.setItem('edu_bestTimes', JSON.stringify(bestTimes));
+
     // 跳轉到第四關的獨立 Three.js 網頁
     window.location.href = "level4.html";
   } else if (menuSelection === 4) {
     // 重置遊戲進度 (隱藏按鈕功能)
-    achievements = [false, false, false];
-    bestTimes = [null, null, null];
+    achievements = [false, false, false, false];
+    bestTimes = [null, null, null, null];
+    sessionStorage.removeItem('edu_achievements');
+    sessionStorage.removeItem('edu_bestTimes');
     currentScene = -1; // 踢回最一開始的起點畫面
     menuSelection = 0;
     shakeTimer = 20; // 震動畫面給予清除紀錄的回饋
+    hasCheered = false; // 重置歡呼狀態
   }
   // 重置狀態，避免連續觸發
   isPinching = false;
@@ -2122,6 +2390,13 @@ function drawBootScreen(pX, pY, pW, pH) {
   let btnY = pY + pH * 0.75 + offsetY * 0.5;
   let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
 
+  // --- 新增：按鈕懸停音效 ---
+  let currentHover = isHovering ? "boot_btn" : "";
+  if (currentHover !== globalHoverState) {
+    if (currentHover !== "" && beepSound && beepSound.isLoaded()) beepSound.play();
+    globalHoverState = currentHover;
+  }
+
   textAlign(CENTER, CENTER);
   fill(255, 200, 0);
   textSize(18);
@@ -2141,6 +2416,7 @@ function drawBootScreen(pX, pY, pW, pH) {
       let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
       rect(btnX + 5, btnY + btnH - 10, barW, 6);
       if (confirmTimer >= confirmThreshold) {
+        if (confirmSound && confirmSound.isLoaded()) confirmSound.play(); // 播放確認音效
         currentScene = 0;
         confirmTimer = 0;
       }
@@ -2195,8 +2471,8 @@ function drawMenu(pX, pY, pW, pH) {
   textSize(32); // 放大選單標題
   text("選擇學習關卡", pX + pW/2, pY + 30);
   
-  // --- 新增：大師成就解鎖提示 (當三個關卡都為 true 時觸發) ---
-  if (achievements[0] && achievements[1] && achievements[2]) {
+  // --- 新增：大師成就解鎖提示 (當四個關卡都為 true 時觸發) ---
+  if (achievements[0] && achievements[1] && achievements[2] && achievements[3]) {
     push();
     drawingContext.shadowBlur = 15;
     drawingContext.shadowColor = "rgba(255, 200, 0, 1)";
@@ -2213,7 +2489,7 @@ function drawMenu(pX, pY, pW, pH) {
   translate(offsetX * 1.0, offsetY * 1.0);
   textAlign(CENTER, TOP); // 確保文字對齊不受前一層 pop 影響
   let menuItems = ["1. 行為主義 (操作制約)", "2. 認知主義 (訊息處理)", "3. 建構主義 (知識搭建)", "4. 第四關：3D 視覺互動系統"];
-  let allClear = achievements[0] && achievements[1] && achievements[2];
+  let allClear = achievements[0] && achievements[1] && achievements[2] && achievements[3];
   if (allClear) menuItems.push("▶ 系統重置 (清除所有進度)");
   
   let startY = pY + 80; 
@@ -2224,7 +2500,7 @@ function drawMenu(pX, pY, pW, pH) {
     let itemY = startY + i * spacing; 
     // --- 新增：判斷是否已通關並在文字後方加上徽章與最快時間 ---
     let displayText = menuItems[i];
-    if (i < 3 && achievements[i]) {
+    if (i < 4 && achievements[i]) {
       displayText += " [★ 已通關]";
       if (bestTimes[i] !== null) {
         displayText += ` (最快: ${bestTimes[i]}秒)`;

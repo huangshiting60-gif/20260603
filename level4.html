@@ -69,8 +69,13 @@
     import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
     // --- 全域變數 ---
-    let scene, camera, renderer, composer;
+    let scene, camera, renderer, composer, bloomPass;
     let particleSystem, bgParticleSystem;
+    
+    // --- 新增：音頻視覺化 (Web Audio API) 變數 ---
+    let audioCtx, analyser, dataArray;
+    let audioScale = 1.0;
+    let isAudioVizInitialized = false;
     
     // 動態變形所需變數
     let particleCount = 20000; // 固定粒子數以利於變形
@@ -95,8 +100,37 @@
     bgMusic.loop = true;
     bgMusic.volume = 0.4; // 預設音量
 
+    // --- 新增：音頻視覺化初始化函數 ---
+    function initAudioVisualizer() {
+      if (isAudioVizInitialized) return;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaElementSource(bgMusic);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256; // 取樣大小
+        source.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+        isAudioVizInitialized = true;
+      } catch (e) {
+        console.warn("音頻視覺化初始化失敗", e);
+      }
+    }
+
+    // 嘗試自動播放 (部分瀏覽器基於安全性限制可能會阻擋)
+    bgMusic.play().then(() => {
+      document.getElementById('audio-hint').innerText = "🔊 音樂播放中 (點擊畫面可暫停)";
+      initAudioVisualizer();
+    }).catch(e => {
+      console.warn("自動播放被瀏覽器阻擋，需等待使用者點擊解鎖", e);
+      document.getElementById('audio-hint').innerText = "🔊 點擊畫面任一處播放音樂";
+    });
+
     // 瀏覽器安全性限制：必須透過使用者互動 (點擊畫面) 才能播放音訊
     window.addEventListener('click', () => {
+      initAudioVisualizer();
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+
       if (bgMusic.paused) {
         bgMusic.play().catch(e => console.warn("音樂播放失敗", e));
         document.getElementById('audio-hint').innerText = "🔊 音樂播放中 (點擊畫面可暫停)";
@@ -124,7 +158,7 @@
       // --- 設置特效合成器 (Bloom 輝光) ---
       const renderScene = new RenderPass(scene, camera);
       // 增加輝光強度，提升震撼度
-      const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.5, 0.6, 0.1);
+      bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.5, 0.6, 0.1);
       
       composer = new EffectComposer(renderer);
       composer.addPass(renderScene);
@@ -258,10 +292,36 @@
       currentRotation.y += (targetRotation.y - currentRotation.y) * 0.1;
       currentScale += (targetScale - currentScale) * 0.15;
 
+      // --- 新增：音樂節奏跳動邏輯 ---
+      if (isAudioVizInitialized && analyser && !bgMusic.paused) {
+        analyser.getByteFrequencyData(dataArray);
+        // 取低音頻段 (前 10 個數據) 計算平均值 (抓取重低音 Bass)
+        let bassSum = 0;
+        for (let i = 0; i < 10; i++) {
+          bassSum += dataArray[i];
+        }
+        let bassAvg = bassSum / 10; // 數值在 0 ~ 255 之間
+        
+        // 將低音數值映射至縮放比例 (節奏強時模型放大)
+        let targetAudioScale = 1.0 + (bassAvg / 255) * 0.4;
+        audioScale += (targetAudioScale - audioScale) * 0.3; // 使用 Lerp 讓跳動更平滑
+
+        // 動態調整 Bloom (輝光) 強度，讓節奏爆發時畫面更亮
+        if (bloomPass) {
+          bloomPass.strength = 3.5 + (bassAvg / 255) * 3.5;
+        }
+      } else {
+        // 音樂暫停或未初始化時，平滑恢復原本大小與亮度
+        audioScale += (1.0 - audioScale) * 0.1;
+        if (bloomPass) bloomPass.strength += (3.5 - bloomPass.strength) * 0.1;
+      }
+
       if (particleSystem) {
         particleSystem.rotation.x = currentRotation.x;
         particleSystem.rotation.y = currentRotation.y;
-        particleSystem.scale.set(currentScale, currentScale, currentScale);
+        
+        let finalScale = currentScale * audioScale;
+        particleSystem.scale.set(finalScale, finalScale, finalScale);
         
         // 要求3：根據旋轉角度改變整體色相
         let rotHue = (Math.abs(currentRotation.y) / (Math.PI * 2)) % 1.0;
@@ -314,7 +374,7 @@
         for (let i = 0; i < particleCount * 3; i++) {
             currentPos[i] = s1[i] + (s2[i] - s1[i]) * blend;
         }
-        particleSystem.geometry.attributes.position.needsUpdate = true;
+        particleSystem.geometry.attributes.position.needsUpdate = true; // 告知 GPU 更新畫面
       }
       
       bgParticleSystem.rotation.y -= 0.0005; // 背景緩慢自轉
@@ -368,7 +428,7 @@
         if (screenX > rect.left - 20 && screenX < rect.right + 20 && screenY > rect.top - 20 && screenY < rect.bottom + 20) {
             if (isPinching) {
                 exitTimer++;
-                if (exitTimer >= 40) window.location.href = 'index.html?scene=0'; // 縮短蓄力時間，並加入參數直接跳轉選單
+                if (exitTimer >= 40) window.location.href = 'index.html?from=level4'; // 返回主選單並附帶通關參數
             } else {
                 exitTimer = Math.max(0, exitTimer - 1); // 減少誤判掉進度的懲罰
             }
