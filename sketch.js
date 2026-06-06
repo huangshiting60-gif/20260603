@@ -8,11 +8,21 @@ let mouseY_pos = 0;     // PoseNet 平滑後的 Y
 // 如果距離小於門檻，請將 isPinching 設為 true
 let isPinching = false; 
 let isPinchingPrev = false; // 用於偵測「剛捏合」的瞬間
+let cursorTrail = []; // 儲存游標發光殘影軌跡
+let bgParticles = []; // 儲存背景飄動的電子粒子
+let bgClouds = [];    // 儲存背景飄動的像素雲朵
+
+// 新增：無敵過關密技手勢 (比讚)
+let isThumbsUp = false;
+let isThumbsUpPrev = false;
+let cheatTimer = 0; // 用於控制「CHEAT ACTIVATED!」跑馬燈的計時器
 
 // 新增：五指張開手勢與選單選擇
 let isHandOpen = false; 
 let isHandOpenPrev = false; // 用於偵測「剛張開」的瞬間
 let menuSelection = 0;   // 0: 行為, 1: 認知, 2: 建構
+let achievements = [false, false, false]; // 追蹤三個關卡的通關狀態 (闖關成就)
+let bestTimes = [null, null, null]; // 追蹤三個關卡的最快通關時間
 
 let confirmTimer = 0;    // 確認進度計時器
 let confirmThreshold = 90; // 延長確認時間，需要張開手維持約 1.5 秒
@@ -33,8 +43,11 @@ let loadingProgress = 0; // 模擬載入進度條
 
 // 遊戲一：行為主義老鼠迷宮變數
 let items = [];         // 儲存所有掉落物 (起司與電擊)
+let floatingTexts = []; // 新增：儲存飄浮文字特效
 let score = 0;          // 分數
 let gameTimer = 0;      // 用於產生掉落物的計時器
+let deadAnimTimer = 0;  // 紀錄老鼠死亡動畫的計時器
+let winAnimTimer = 0;   // 紀錄過關動畫的計時器
 
 // 遊戲二：認知主義記憶翻牌變數
 let video;              // 攝像頭影像
@@ -43,6 +56,7 @@ let lockBoard = false;  // 防止在判定勝負時繼續翻牌
 let matchCount = 0;     // 配對成功的次數
 let matchTimer = 0;     // 配對失敗後的自動關牌計時器
 let cardsToClose = [];  // 暫時儲存需要翻回去的卡牌
+let mistakeCount = 0;   // 翻錯次數 (達 3 次則失敗)
 
 // 遊戲三：建構主義積木搭建變數
 let floatingBlocks = []; // 飄浮中的積木
@@ -110,10 +124,16 @@ function updateHandData() {
       if (tipDist > jointDist) openCount++;
     });
     isHandOpen = openCount >= 3; // 只要有三根手指伸直就判定為張開
+
+    // --- 新增：判定比讚 (Thumbs Up) ---
+    // 條件：四指皆彎曲 (openCount === 0) 且大拇指尖端 (4) 明顯高於食指根部 (5)
+    let isThumbUpward = hand.keypoints[4].y < hand.keypoints[5].y - 20; 
+    isThumbsUp = (openCount === 0) && isThumbUpward;
   } else {
     // 如果沒偵測到手，重置狀態
     isHandOpen = false;
     isPinching = false;
+    isThumbsUp = false;
   }
 }
 
@@ -144,6 +164,54 @@ function draw() {
     line(0, y, width, y);
   }
 
+  // --- 新增：像素雲朵 (Pixel Clouds) ---
+  // 每 150 個影格隨機生成一朵新的雲
+  if (frameCount % 150 === 0) {
+    bgClouds.push({
+      x: width + 50,
+      y: random(20, height * 0.4), // 集中在畫面上半部
+      speed: random(0.2, 0.6),     // 非常緩慢地向左飄
+      size: floor(random(3, 8))    // 隨機像素大小
+    });
+  }
+  
+  noStroke();
+  for (let i = bgClouds.length - 1; i >= 0; i--) {
+    let c = bgClouds[i];
+    c.x -= c.speed; // 向左移動
+    fill(255, 255, 255, 25); // 非常淡的半透明白色
+    let s = c.size;
+    // 繪製簡單的 8-bit 風格雲朵 (由三個長方形堆疊而成)
+    rect(c.x + s * 2, c.y, s * 4, s);
+    rect(c.x, c.y + s, s * 8, s);
+    rect(c.x + s, c.y + s * 2, s * 6, s);
+    
+    if (c.x < -100) bgClouds.splice(i, 1); // 超出螢幕左側則刪除，釋放記憶體
+  }
+
+  // --- 新增：背景電子粒子 (Digital Dust) ---
+  // 每 8 個影格隨機生成一顆新的粒子
+  if (frameCount % 8 === 0) {
+    bgParticles.push({
+      x: random(width),
+      y: height + 20, // 從畫面底部外面產生
+      size: floor(random(3, 10)), // 隨機像素方塊大小
+      speed: random(1, 2.5), // 往上升的速度
+      drift: random(1000), // 賦予每個粒子不同的左右飄移頻率
+      c: random(1) > 0.5 ? color(0, 200, 255) : color(255, 50, 150) // 隨機賦予水藍色或霓虹粉色
+    });
+  }
+  
+  noStroke();
+  for (let i = bgParticles.length - 1; i >= 0; i--) {
+    let p = bgParticles[i];
+    p.y -= p.speed; // 向上飄動
+    p.x += sin(frameCount * 0.02 + p.drift) * 0.5; // 加入微弱的 S 型左右飄擺
+    fill(p.c.levels[0], p.c.levels[1], p.c.levels[2], 120); // 帶透明度發光
+    rect(p.x, p.y, p.size, p.size, 1); // 畫出電子方塊
+    if (p.y < -20) bgParticles.splice(i, 1); // 超出螢幕上方則刪除，釋放記憶體
+  }
+
   // === 2. 掌上型電玩主機機身 ===
   let consoleW = width * 0.85;
   let consoleH = height * 0.85;
@@ -164,14 +232,35 @@ function draw() {
     pop();
   }
 
-  // 主機灰色外殼
-  noStroke();
-  fill(60, 65, 75); 
-  rect(consoleX, consoleY, consoleW, consoleH, 20);
+  // 確認是否達成大師成就 (三個關卡皆通過)
+  let isMaster = achievements[0] && achievements[1] && achievements[2];
 
-  // 主機外殼深色陰影（增加立體厚度感）
-  fill(45, 50, 55);
-  rect(consoleX, consoleY + consoleH - 15, consoleW, 15, 0, 0, 20, 20);
+  noStroke();
+  if (isMaster) {
+    push();
+    colorMode(HSB, 360, 100, 100); // 切換到 HSB 模式製作彩虹色
+    let hueValue = (frameCount * 2) % 360; // 隨時間改變顏色
+    
+    // 賦予大師專屬：閃耀彩虹霓虹外殼發光效果
+    drawingContext.shadowBlur = 25 + sin(frameCount * 0.1) * 10;
+    drawingContext.shadowColor = color(hueValue, 80, 100).toString();
+    fill(hueValue, 30, 90); // 帶有霓虹感的彩虹基底色
+    rect(consoleX, consoleY, consoleW, consoleH, 20);
+    
+    // 底部深色立體陰影 (無發光，顏色較深保持立體感)
+    drawingContext.shadowBlur = 0;
+    fill(hueValue, 50, 60);
+    rect(consoleX, consoleY + consoleH - 15, consoleW, 15, 0, 0, 20, 20);
+    pop();
+  } else {
+    // 預設主機灰色外殼
+    fill(60, 65, 75); 
+    rect(consoleX, consoleY, consoleW, consoleH, 20);
+
+    // 主機外殼深色陰影（增加立體厚度感）
+    fill(45, 50, 55);
+    rect(consoleX, consoleY + consoleH - 15, consoleW, 15, 0, 0, 20, 20);
+  }
 
   // === 3. 頂部：復古卡帶插槽 ===
   fill(30, 30, 35);
@@ -194,6 +283,36 @@ function draw() {
   stroke(50, 100, 200); // 藍線
   line(screenX + 20, screenY + 22, screenX + screenW - 20, screenY + 22);
 
+  // --- 新增：機台指示燈與標籤 ---
+  push();
+  // 1. LED 數字時鐘 (取代原本的 POWER 指示燈)
+  let h = nf(hour(), 2);
+  let m = nf(minute(), 2);
+  let s = nf(second(), 2);
+  let colon = (frameCount % 60 < 30) ? ":" : " "; // 每半秒閃爍一次的冒號
+  let timeStr = `${h}${colon}${m}${colon}${s}`;
+  
+  // 根據模型載入狀態決定時鐘顏色 (載入中紅色閃爍，完成後水藍色常亮)
+  let clockColor = modelLoaded ? color(0, 200, 255) : color(255, 50, 50);
+  if (!modelLoaded && frameCount % 30 < 15) clockColor = color(100, 20, 20); 
+  
+  fill(clockColor);
+  drawingContext.shadowBlur = 10;
+  drawingContext.shadowColor = clockColor.toString();
+  textSize(16);
+  textStyle(BOLD);
+  textAlign(LEFT, CENTER);
+  text("TIME " + timeStr, screenX + 20, screenY - 20);
+  drawingContext.shadowBlur = 0; // 關閉發光效果避免影響後續繪圖
+
+  // 2. 品牌或機台型號 Logo
+  textAlign(RIGHT, CENTER);
+  textStyle(ITALIC);
+  textSize(16);
+  fill(150, 150, 160);
+  text("EduPsych Boy™", screenX + screenW - 20, screenY - 20);
+  pop();
+
   // === 5. 真正的遊戲畫面渲染區（CRT 電視綠色感） ===
   noStroke();
   fill(10, 20, 30); // 暗藍色底色
@@ -203,13 +322,18 @@ function draw() {
   let playAreaH = screenH - 70;
   rect(playAreaX, playAreaY, playAreaW, playAreaH);
 
-  // 模擬 CRT 螢幕微弱的掃描線特效
-  stroke(0, 200, 255, 15); // 水藍色透明線條
-  strokeWeight(2);
-  let scanlineOffset = (frameCount * 0.5) % 6;
-  for (let sY = playAreaY + scanlineOffset; sY < playAreaY + playAreaH; sY += 6) {
-    line(playAreaX, sY, playAreaX + playAreaW, sY);
+  // --- 修改：復古雜訊雪花畫面特效 (Static Noise) ---
+  push();
+  noStroke();
+  for (let i = 0; i < 300; i++) {
+    let noiseX = random(playAreaX, playAreaX + playAreaW - 3);
+    let noiseY = random(playAreaY, playAreaY + playAreaH - 3);
+    let noiseSize = random(2, 4); // 雪花顆粒大小
+    // 隨機產生半透明的黑色或白色雪花
+    fill(random(1) > 0.5 ? 255 : 0, random(10, 40)); 
+    rect(noiseX, noiseY, noiseSize, noiseSize);
   }
+  pop();
 
   // === 8. 場景切換邏輯 ===
   // 根據 currentScene 決定要畫哪一個關卡
@@ -228,14 +352,15 @@ function draw() {
       menuSelection = constrain(menuSelection, 0, 2);
 
       // --- 優化：蓄力確認機制 (改為捏合) ---
-      if (isPinching && modelLoaded && predictions.length > 0) {
+      let isActionTriggered = (isPinching && modelLoaded && predictions.length > 0);
+      if (isActionTriggered) {
         confirmTimer++;
         if (confirmTimer >= confirmThreshold) {
           handleMenuSelection(playAreaX, playAreaY, playAreaW, playAreaH);
           confirmTimer = 0; // 觸發後重置
         }
       } else {
-        confirmTimer = Math.max(0, confirmTimer - 2); // 沒張手時進度條快速退回
+        confirmTimer = Math.max(0, confirmTimer - 2); // 沒觸發時進度條快速退回
       }
 
       drawMenu(playAreaX, playAreaY, playAreaW, playAreaH);
@@ -251,31 +376,88 @@ function draw() {
       break;
   }
 
+  // === 9. CRT 螢幕玻璃反光與動態厚掃描線疊加 ===
+  push();
+  drawingContext.save();
+  drawingContext.beginPath();
+  drawingContext.rect(playAreaX, playAreaY, playAreaW, playAreaH);
+  drawingContext.clip(); // 限制特效只在螢幕範圍內渲染
+
+  // 1. 緩慢向下移動的粗掃描線 (Roll bar)
+  let barY = playAreaY + (frameCount * 1.5) % (playAreaH + 100) - 50;
+  let gradient = drawingContext.createLinearGradient(0, barY, 0, barY + 50);
+  gradient.addColorStop(0, "rgba(0, 200, 255, 0)");
+  gradient.addColorStop(0.5, "rgba(0, 200, 255, 0.15)"); // 微弱的水藍色漸層
+  gradient.addColorStop(1, "rgba(0, 200, 255, 0)");
+  drawingContext.fillStyle = gradient;
+  rect(playAreaX, barY, playAreaW, 50);
+
+  // 2. 玻璃斜角反光 (Glare)
+  fill(255, 255, 255, 12);
+  noStroke();
+  beginShape();
+  vertex(playAreaX, playAreaY);
+  vertex(playAreaX + playAreaW * 0.4, playAreaY);
+  vertex(playAreaX, playAreaY + playAreaH * 0.7);
+  endShape(CLOSE);
+
+  drawingContext.restore();
+  pop();
+
   // === 6. 右側：實體遊戲按鈕區 ===
   drawControls(screenX, screenW, screenY, screenH, consoleW);
 
   // --- 全域手部游標顯示 ---
+  // 更新游標軌跡
   if (predictions.length > 0) {
+    // 記錄當下的 x, y 與捏合狀態
+    cursorTrail.push({ x: mouseX_pos, y: mouseY_pos, pinch: isPinching });
+    if (cursorTrail.length > 20) {
+      cursorTrail.shift(); // 維持最多 20 個殘影點
+    }
+  } else if (cursorTrail.length > 0) {
+    cursorTrail.shift(); // 沒偵測到手時讓殘影慢慢消失
+  }
+
+  if (cursorTrail.length > 0 || predictions.length > 0) {
     push();
-    if (isPinching) {
-      fill(255, 0, 0); // 捏合時變紅色
-      noStroke();
-      ellipse(mouseX_pos, mouseY_pos, 15, 15);
-      noFill();
-      stroke(255, 0, 0);
-      strokeWeight(2);
-      ellipse(mouseX_pos, mouseY_pos, 30, 30);
-    } else {
-      fill(0, 200, 255, 200); // 沒捏合時為半透明水藍色
-      stroke(0, 200, 255);
-      strokeWeight(2);
-      ellipse(mouseX_pos, mouseY_pos, 20, 20);
+    
+    // 1. 繪製發光殘影 (Trail) 特效
+    noStroke();
+    for (let i = 0; i < cursorTrail.length; i++) {
+      let pt = cursorTrail[i];
+      let progress = i / cursorTrail.length; // 越新的點數值越接近 1
+      let size = progress * 15; // 越早的點越小 (尖端收尾)
+      let alpha = progress * 150; // 越早的點越透明
+      
+      // 如果當時是捏合狀態，殘影也顯示紅色
+      fill(pt.pinch ? color(255, 0, 0, alpha) : color(0, 200, 255, alpha));
+      ellipse(pt.x, pt.y, size, size);
+    }
+
+    // 2. 繪製當前游標實體
+    if (predictions.length > 0) {
+      if (isPinching) {
+        fill(255, 0, 0); // 捏合時變紅色
+        noStroke();
+        ellipse(mouseX_pos, mouseY_pos, 15, 15);
+        noFill();
+        stroke(255, 0, 0);
+        strokeWeight(2);
+        ellipse(mouseX_pos, mouseY_pos, 30, 30);
+      } else {
+        fill(0, 200, 255, 200); // 沒捏合時為半透明水藍色
+        stroke(0, 200, 255);
+        strokeWeight(2);
+        ellipse(mouseX_pos, mouseY_pos, 20, 20);
+      }
     }
     pop();
   }
 
   isPinchingPrev = isPinching; // 紀錄這一影格的狀態供下一影格比較
   isHandOpenPrev = isHandOpen; // 紀錄這一影格的狀態供下一影格比較
+  isThumbsUpPrev = isThumbsUp; // 紀錄這一影格的狀態供下一影格比較
 
   // --- 新增：AI 模型載入畫面 (淡入淡出過場特效) ---
   if (!modelLoaded) {
@@ -352,6 +534,51 @@ function draw() {
     pop();
   }
 
+  // --- 隱藏密技：CHEAT ACTIVATED 跑馬燈 ---
+  if (cheatTimer > 0) {
+    push();
+    
+    // --- 新增：雜訊 (Glitch) 視覺特效 ---
+    for (let i = 0; i < 20; i++) {
+      // 隨機產生彩色橫向撕裂方塊
+      fill(random(255), random(255), random(255), random(100, 200));
+      noStroke();
+      rect(random(width), random(height), random(50, 300), random(2, 15));
+    }
+    // 隨機全螢幕閃爍 (模擬 RGB 色偏)
+    if (frameCount % 4 < 2) {
+      fill(255, 0, 0, 30); // 偏紅
+    } else {
+      fill(0, 200, 255, 30); // 偏水藍
+    }
+    rect(0, 0, width, height);
+
+    let marqueeY = height / 2;
+    // 讓 x 座標從右跑到左 (180 幀約 3 秒完成)
+    let marqueeX = map(cheatTimer, 180, 0, width, -width * 2);
+    
+    // 半透明黑色警告條
+    fill(0, 180);
+    noStroke();
+    rect(0, marqueeY - 50, width, 100);
+    
+    // 紅色發光文字
+    drawingContext.shadowBlur = 20;
+    drawingContext.shadowColor = "rgba(255, 50, 50, 1)";
+    fill(255, 50, 50);
+    textSize(50);
+    textStyle(BOLD);
+    textAlign(LEFT, CENTER);
+    
+    // 重複多次字串確保能長到填滿整個移動路徑
+    let cheatText = "⚠ 作弊模式啟動！ ⚠   ".repeat(8);
+    text(cheatText, marqueeX, marqueeY);
+    
+    drawingContext.shadowBlur = 0; // 重置發光效果，避免引發嚴重的效能崩潰 (當機)
+    cheatTimer--;
+    pop();
+  }
+
   pop(); // 結束震動效果的作用範圍
 }
 
@@ -362,7 +589,8 @@ function updateCountdown() {
     lastTimerTick = millis();
     if (countdown <= 0) {
       countdown = 0;
-      gameState = "lose";
+      gameState = "lose_anim"; // 統一觸發失敗動畫
+      deadAnimTimer = 60;      // 給予 1 秒動畫時間
     }
   }
 }
@@ -399,13 +627,16 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   fill(255);
   textSize(18); // 放大目標與操作
   textStyle(BOLD);
-  text("GOAL: " + goal, pX + pW / 2, pY + pH * 0.35);
-  text("CONTROL: " + control, pX + pW / 2, pY + pH * 0.42);
+  text("目標: " + goal, pX + pW / 2, pY + pH * 0.35);
+  text("操作: " + control, pX + pW / 2, pY + pH * 0.42);
   
   textStyle(NORMAL);
   textSize(15); // 放大理論文字
   fill(200, 200, 255);
-  text(theory, pX + 40, pY + pH * 0.52, pW - 80); // 使用寬度參數實現自動換行
+  textAlign(LEFT, TOP); // 將段落對齊方式設為左上
+  textLeading(22); // 增加行距，增進閱讀體驗
+  text(theory, pX + 40, pY + pH * 0.50, pW - 80, pH * 0.25); // 明確給予寬度與高度邊界，防止溢出
+  textAlign(CENTER, CENTER); // 恢復原本的置中對齊，以免影響後續的按鈕文字
 
   // --- 新增：明確的開始按鈕與蓄力機制 ---
   let btnW = 160;
@@ -427,7 +658,8 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
     textSize(16);
     text("開始挑戰", pX + pW / 2, btnY + 22);
 
-    if (isPinching && modelLoaded && predictions.length > 0) {
+    let isActionTriggered = (isPinching && modelLoaded && predictions.length > 0);
+    if (isActionTriggered) {
       confirmTimer++;
       fill(255, 255, 0);
       let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
@@ -456,6 +688,33 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   pop();
 }
 
+// --- 核心：繪製單一復古印章 ---
+function drawStamp(x, y, label, scaleFactor, alpha) {
+  push();
+  translate(x, y);
+  scale(scaleFactor);
+  rotate(-0.15); // 稍微傾斜，看起來像手工蓋的印章
+  
+  stroke(220, 40, 40, alpha);
+  strokeWeight(4);
+  noFill();
+  ellipse(0, 0, 60, 60);
+  ellipse(0, 0, 50, 50);
+  
+  fill(220, 40, 40, alpha);
+  noStroke();
+  textAlign(CENTER, CENTER);
+  textSize(16);
+  textStyle(BOLD);
+  text(label, 0, 0);
+  
+  // 印章內的復古底線裝飾
+  stroke(220, 40, 40, alpha);
+  strokeWeight(2);
+  line(-15, 12, 15, 12);
+  pop();
+}
+
 // --- 核心：繪製結束畫面 ---
 function drawEndScreen(pX, pY, pW, pH) {
   push();
@@ -463,59 +722,215 @@ function drawEndScreen(pX, pY, pW, pH) {
   noStroke();
   rect(pX, pY, pW, pH);
   
+  let allClear = achievements[0] && achievements[1] && achievements[2];
+
   textAlign(CENTER, CENTER);
   if (gameState === "win") {
-    fill(0, 200, 255);
-    textSize(40); // 放大結束標題
-    text("挑戰成功！", pX + pW / 2, pY + pH / 2 - 20);
+    if (stampAnimTimer > 0) stampAnimTimer--;
+
+    // --- 繪製集章卡底板 ---
+    fill(245, 240, 230); // 復古紙張顏色
+    rect(pX + pW * 0.1, pY + pH * 0.2, pW * 0.8, pH * 0.45, 10);
+    
+    fill(40, 30, 20);
+    textSize(24);
+    text("- 學習集章卡 -", pX + pW / 2, pY + pH * 0.28);
+
+    // 繪製三個集章格子
+    let labels = ["行為制約", "訊息處理", "知識建構"];
+    for (let i = 0; i < 3; i++) {
+      let slotX = pX + pW * 0.25 + i * (pW * 0.25);
+      let slotY = pY + pH * 0.48;
+      
+      // 空的蓋章虛線框
+      stroke(200, 180, 150);
+      strokeWeight(2);
+      drawingContext.setLineDash([5, 5]);
+      noFill();
+      ellipse(slotX, slotY, 60, 60);
+      drawingContext.setLineDash([]); // 重置
+      
+      noStroke();
+      fill(150, 130, 110);
+      textSize(12);
+      text(labels[i], slotX, slotY + 45);
+
+      // 動態蓋章特效邏輯
+      if (achievements[i]) {
+        // 如果是「這次」剛獲得的章，執行砸落動畫
+        if (i === currentScene - 1 && stampAnimTimer > 0) {
+          if (stampAnimTimer === 20) shakeTimer = 20; // 蓋下去的瞬間螢幕強烈震動
+          if (stampAnimTimer > 20) {
+            let s = map(stampAnimTimer, 60, 20, 4, 1); // 尺寸從巨大縮回正常
+            let a = map(stampAnimTimer, 60, 20, 0, 255); // 透明度淡入
+            drawStamp(slotX, slotY, "CLEAR", s, a);
+          } else {
+            drawStamp(slotX, slotY, "CLEAR", 1, 255);
+          }
+        } else {
+          // 之前已經獲得的章，直接平靜地顯示
+          drawStamp(slotX, slotY, "CLEAR", 1, 255);
+        }
+      }
+    }
+
+    // --- 標題文字與全破紙花特效 ---
+    if (allClear && stampAnimTimer <= 0) {
+      drawingContext.shadowBlur = 20;
+      drawingContext.shadowColor = "rgba(255, 200, 0, 1)";
+      fill(255, 210, 0);
+      textSize(36);
+      text("🏆 教育心理學大師 通關！ 🏆", pX + pW / 2, pY + pH * 0.12);
+      drawingContext.shadowBlur = 0;
+      
+      // 8-bit 風格瘋狂灑紙花
+      for (let i = 0; i < 8; i++) {
+        fill(random(100, 255), random(100, 255), random(100, 255));
+        rect(pX + random(pW), pY + random(pH * 0.8), 8, 8);
+      }
+    } else {
+      fill(0, 200, 255);
+      textSize(32);
+      text("關卡完成！獲得一枚印章", pX + pW / 2, pY + pH * 0.12);
+    }
+
   } else {
     fill(255, 50, 50);
     textSize(40);
     text("挑戰失敗", pX + pW / 2, pY + pH / 2 - 20);
   }
   
-  // --- 新增：明確的回選單按鈕 ---
-  let btnW = 160;
-  let btnH = 45;
-  let btnX = pX + (pW - btnW) / 2;
-  let btnY = pY + pH * 0.7;
+  // --- 確認按鈕 (僅在動畫播完後出現) ---
+  if (gameState === "lose" || (gameState === "win" && stampAnimTimer <= 0)) {
+    let btnW = 160;
+    let btnH = 45;
+    let btnX = pX + (pW - btnW) / 2;
+    let btnY = pY + pH * 0.75; // 下移避開集章卡
 
-  let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW &&
-                   mouseY_pos > btnY && mouseY_pos < btnY + btnH;
+    let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW &&
+                     mouseY_pos > btnY && mouseY_pos < btnY + btnH;
+
+    fill(255, 200, 0);
+    textSize(14);
+    noStroke();
+    text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
+
+    if (isHovering) {
+      fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+      rect(btnX, btnY, btnW, btnH, 5);
+      fill(0);
+      textSize(16);
+      text(allClear ? "領取大師稱號" : "回主選單", pX + pW / 2, btnY + 22);
+
+      let isActionTriggered = (isPinching && modelLoaded && predictions.length > 0);
+      if (isActionTriggered) {
+        confirmTimer++;
+        fill(255, 255, 0);
+        let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
+        rect(btnX + 5, btnY + btnH - 10, barW, 6);
+        if (confirmTimer >= confirmThreshold) {
+          currentScene = 0;
+          confirmTimer = 0;
+        }
+      } else {
+        confirmTimer = Math.max(0, confirmTimer - 2);
+      }
+    } else {
+      noFill();
+      stroke(0, 200, 255);
+      strokeWeight(2);
+      rect(btnX, btnY, btnW, btnH, 5);
+      noStroke();
+      fill(0, 200, 255);
+      textSize(16);
+      text(allClear ? "領取大師稱號" : "回主選單", pX + pW / 2, btnY + 22);
+      confirmTimer = Math.max(0, confirmTimer - 2);
+    }
+  }
+  pop();
+}
+
+// --- 核心：繪製暫停畫面 ---
+function drawPauseScreen(pX, pY, pW, pH) {
+  push();
+  fill(0, 180); // 半透明黑色遮罩
+  noStroke();
+  rect(pX, pY, pW, pH);
+
+  textAlign(CENTER, CENTER);
+  fill(0, 200, 255);
+  textSize(40);
+  text("遊戲暫停", pX + pW / 2, pY + pH * 0.35);
+
+  // 調整為三個按鈕的佈局
+  let btnW = 130;
+  let btnH = 45;
+  let spacing = 15;
+  let btnX2 = pX + pW / 2 - btnW / 2;        // 中間按鈕 (重新開始)
+  let btnX1 = btnX2 - btnW - spacing;        // 左邊按鈕 (繼續遊戲)
+  let btnX3 = btnX2 + btnW + spacing;        // 右邊按鈕 (回主選單)
+  let btnY = pY + pH * 0.6;
+
+  let hover1 = mouseX_pos > btnX1 && mouseX_pos < btnX1 + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
+  let hover2 = mouseX_pos > btnX2 && mouseX_pos < btnX2 + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
+  let hover3 = mouseX_pos > btnX3 && mouseX_pos < btnX3 + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
 
   fill(255, 200, 0);
   textSize(14);
-  noStroke();
   text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
 
-  if (isHovering) {
-    fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
-    rect(btnX, btnY, btnW, btnH, 5);
-    fill(0);
-    textSize(16);
-    text("回主選單", pX + pW / 2, btnY + 22);
+  // 繪製三個按鈕
+  let drawBtn = (x, y, w, h, label, isHovering) => {
+    if (isHovering) {
+      fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+      rect(x, y, w, h, 5);
+      fill(0); textSize(16); text(label, x + w / 2, y + h / 2);
+    } else {
+      noFill(); stroke(0, 200, 255); strokeWeight(2);
+      rect(x, y, w, h, 5);
+      noStroke(); fill(0, 200, 255); textSize(16); text(label, x + w / 2, y + h / 2);
+    }
+  };
+  drawBtn(btnX1, btnY, btnW, btnH, "繼續遊戲", hover1);
+  drawBtn(btnX2, btnY, btnW, btnH, "重新開始", hover2);
+  drawBtn(btnX3, btnY, btnW, btnH, "回主選單", hover3);
 
-    if (isPinching && modelLoaded && predictions.length > 0) {
+  // 進度條觸發邏輯
+  if (hover1 || hover2 || hover3) {
+    let isActionTriggered = (isPinching && modelLoaded && predictions.length > 0);
+    if (isActionTriggered) {
       confirmTimer++;
       fill(255, 255, 0);
       let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
-      rect(btnX + 5, btnY + btnH - 10, barW, 6);
+      if (hover1) rect(btnX1 + 5, btnY + btnH - 10, barW, 6);
+      if (hover2) rect(btnX2 + 5, btnY + btnH - 10, barW, 6);
+      if (hover3) rect(btnX3 + 5, btnY + btnH - 10, barW, 6);
+
       if (confirmTimer >= confirmThreshold) {
-        currentScene = 0;
+        if (hover1) { 
+          gameState = "playing"; 
+          lastTimerTick = millis(); 
+        }
+        if (hover2) { 
+          // 根據 currentScene 判斷要重置哪一關
+          if (currentScene === 1) {
+            score = 0; items = []; countdown = 30; gameState = "intro"; deadAnimTimer = 0;
+          } else if (currentScene === 2) {
+            initGameTwo(pX, pY, pW, pH); countdown = 45; gameState = "intro";
+          } else if (currentScene === 3) {
+            initGameThree(pX, pY, pW, pH); countdown = 60; gameState = "intro"; winAnimTimer = 0;
+          }
+        }
+        if (hover3) { 
+          currentScene = 0; 
+        }
         confirmTimer = 0;
+        isPinching = false; // 避免切換場景後誤觸其他功能
       }
     } else {
       confirmTimer = Math.max(0, confirmTimer - 2);
     }
   } else {
-    noFill();
-    stroke(0, 200, 255);
-    strokeWeight(2);
-    rect(btnX, btnY, btnW, btnH, 5);
-    noStroke();
-    fill(0, 200, 255);
-    textSize(16);
-    text("回主選單", pX + pW / 2, btnY + 22);
     confirmTimer = Math.max(0, confirmTimer - 2);
   }
   pop();
@@ -564,16 +979,57 @@ function runGameOne(pX, pY, pW, pH) {
   if (gameState === "intro") {
     let theoryText = "理論背景：斯金納的操作制約。行為是透過「正增強」（起司獎勵）與「懲罰」（電擊）來形塑的。當行為產生積極結果時，該行為在未來發生的機率就會增加。";
     drawIntroScreen("行為主義", 
-                    "吃到起司獲得 100 分。", 
+                    "吃到起司獲得 100 分 (扣至 -50 則失敗)。", 
                     "移動手勢控制老鼠位置。", 
                     theoryText,
                     pX, pY, pW, pH);
     return;
   }
 
-  if (gameState !== "playing") {
+  // --- 新增：播放死亡動畫中 ---
+  if (gameState === "lose_anim") {
+    deadAnimTimer--;
+    if (deadAnimTimer <= 0) {
+      gameState = "lose"; // 動畫播完才切換到真正的失敗畫面
+    }
+  }
+
+  // --- 新增：播放過關光柱動畫中防護 ---
+  if (gameState === "win_anim") {
+    winAnimTimer--;
+    if (winAnimTimer <= 0) {
+      gameState = "win";
+    }
+  }
+
+  if (gameState !== "playing" && gameState !== "lose_anim" && gameState !== "win_anim" && gameState !== "paused" && gameState !== "cheat_anim") {
     drawEndScreen(pX, pY, pW, pH);
     return;
+  }
+
+  // --- 新增：手勢觸發暫停 ---
+  if (gameState === "playing" && isHandOpen && !isHandOpenPrev) {
+    gameState = "paused";
+  }
+
+  // --- 新增：隱藏密技 (比讚無敵過關) ---
+  if (gameState === "playing" && isThumbsUp && !isThumbsUpPrev) {
+    gameState = "cheat_anim";
+    cheatTimer = 180; // 觸發跑馬燈與回溯動畫
+    shakeTimer = 30;  // 觸發畫面震動
+    // 物品快速反向飛回天上
+    for (let i of items) i.speed = -abs(i.speed) * 3; 
+  }
+
+  if (gameState === "cheat_anim") {
+    if (cheatTimer <= 0) {
+      score = 100;
+      gameState = "win";
+      stampAnimTimer = 60; // 觸發蓋章動畫
+      achievements[0] = true;
+      let timeSpent = 30 - countdown;
+      if (bestTimes[0] === null || timeSpent < bestTimes[0]) bestTimes[0] = timeSpent;
+    }
   }
 
   updateCountdown();
@@ -594,37 +1050,69 @@ function runGameOne(pX, pY, pW, pH) {
   let playerX = constrain(mouseX_pos, pX + 15, pX + pW - 15);
   let playerY = constrain(mouseY_pos, pY + 15, pY + pH - 15);
 
+  if (gameState === "cheat_anim") {
+    // 老鼠被強制吸回畫面正中央，並產生雜訊抖動
+    let progress = map(cheatTimer, 180, 0, 0, 1);
+    playerX = lerp(playerX, pX + pW / 2, progress) + random(-10, 10);
+    playerY = lerp(playerY, pY + pH / 2, progress) + random(-10, 10);
+  }
+
   // 畫老鼠 (全新頂視角，更像老鼠的特徵)
   push();
   translate(playerX, playerY);
   
+  // --- 新增：頭暈旋轉與發黑動畫特效 ---
+  let isDead = (gameState === "lose_anim");
+  if (isDead) {
+    rotate(frameCount * 0.3); // 頭暈旋轉
+    scale(map(deadAnimTimer, 60, 0, 1, 0.2)); // 伴隨縮小墜落
+    
+    // 畫頭暈小星星
+    push();
+    stroke(255, 255, 0);
+    strokeWeight(2);
+    noFill();
+    let starY = -30 + sin(frameCount * 0.3) * 5;
+    ellipse(-12, starY, 4, 4);
+    ellipse(12, starY - 5, 4, 4);
+    pop();
+  }
+  
   // 1. 老鼠尾巴
   noFill();
-  stroke(150);
+  stroke(isDead ? 50 : 150); // 死亡時發黑
   strokeWeight(3);
   bezier(0, 10, 15, 25, -15, 35, 5, 45); // 彎曲的長尾巴
   
   // 2. 老鼠耳朵
   noStroke();
-  fill(180);
+  fill(isDead ? 40 : 180); // 死亡時發黑
   ellipse(-12, -5, 16, 16); // 左耳外框
   ellipse(12, -5, 16, 16);  // 右耳外框
-  fill(255, 150, 150);
+  fill(isDead ? 80 : color(255, 150, 150)); // 內耳發黑
   ellipse(-12, -5, 8, 8);   // 左耳內耳
   ellipse(12, -5, 8, 8);    // 右耳內耳
   
   // 3. 老鼠身體與尖尖的臉
-  fill(200);
+  fill(isDead ? 50 : 200); // 死亡時發黑
   ellipse(0, 0, 26, 35);     // 圓圓的身體
   triangle(-12, -5, 12, -5, 0, -22); // 尖尖的鼻子輪廓
   
   // 4. 眼睛
-  fill(0);
-  ellipse(-5, -12, 4, 4); // 左眼
-  ellipse(5, -12, 4, 4);  // 右眼
+  if (isDead) {
+    // 死亡時變成白色的 X 叉叉眼
+    stroke(255);
+    strokeWeight(2);
+    line(-7, -14, -3, -10); line(-3, -14, -7, -10); // 左眼 X
+    line(3, -14, 7, -10);   line(7, -14, 3, -10);   // 右眼 X
+  } else {
+    fill(0);
+    ellipse(-5, -12, 4, 4); // 左眼
+    ellipse(5, -12, 4, 4);  // 右眼
+  }
   
   // 5. 鬍鬚
-  stroke(200);
+  stroke(isDead ? 100 : 200); // 死亡時發黑
   strokeWeight(1);
   line(-3, -18, -18, -22); // 左上鬍鬚
   line(-3, -16, -18, -16); // 左下鬍鬚
@@ -633,45 +1121,84 @@ function runGameOne(pX, pY, pW, pH) {
   
   // 6. 鼻子
   noStroke();
-  fill(255, 100, 100);
+  fill(isDead ? 80 : color(255, 100, 100)); // 死亡時發黑
   ellipse(0, -22, 6, 6);  // 粉紅小鼻子
   pop();
   
   // B. 自動生成物件
-  gameTimer++;
-  if (gameTimer % 45 === 0) {
-    items.push(new FallingItem(pX, pY, pW, pH));
+  if (gameState === "playing") { // 確保動畫期間不會繼續掉積木
+    gameTimer++;
+    if (gameTimer % 45 === 0) {
+      items.push(new FallingItem(pX, pY, pW, pH));
+    }
   }
 
   // C. 處理所有掉落物 (更新、顯示、碰撞)
   for (let i = items.length - 1; i >= 0; i--) {
-    items[i].update();
+    if (gameState === "playing" || gameState === "cheat_anim") { // 確保動畫期間物件凍結在空中，但作弊時反向飛
+      items[i].update();
+    }
     items[i].display();
 
-    // 基礎碰撞偵測 (配合放大，將判定距離從 30 增加到 45)
-    let d = dist(playerX, playerY, items[i].x, items[i].y + 15); // 將判定中心下移到物件中心
-    if (d < 45) {
-      if (items[i].type === "cheese") {
-        score += 10; 
-        if (score >= 100) gameState = "win"; // 滿百分勝利
-        // 水藍色閃爍效果
-        push();
-        fill(0, 200, 255, 100);
-        rect(pX, pY, pW, pH);
-        pop();
-      } else {
-        score -= 20; // 懲罰：削弱行為
-        shakeTimer = 15; // 觸發畫面震動回饋
-        // 紅色閃爍效果
-        push();
-        fill(255, 0, 0, 100);
-        rect(pX, pY, pW, pH);
-        pop();
+    if (gameState === "playing") {
+      // 基礎碰撞偵測 (配合放大，將判定距離從 30 增加到 45)
+      let d = dist(playerX, playerY, items[i].x, items[i].y + 15); // 將判定中心下移到物件中心
+      if (d < 45) {
+        if (items[i].type === "cheese") {
+          score += 10; 
+          if (score >= 100 && gameState === "playing") {
+            gameState = "win"; // 滿百分勝利
+            achievements[0] = true; // 解鎖行為主義成就
+            let timeSpent = 30 - countdown; // 計算花費時間
+            if (bestTimes[0] === null || timeSpent < bestTimes[0]) bestTimes[0] = timeSpent;
+          }
+          // 水藍色閃爍效果
+          push();
+          fill(0, 200, 255, 100);
+          rect(pX, pY, pW, pH);
+          pop();
+          // 飄出 +10 特效
+          floatingTexts.push({ x: items[i].x, y: items[i].y, text: "+10", alpha: 255, c: color(255, 200, 0) });
+        } else {
+          score -= 20; // 懲罰：削弱行為
+          if (score <= -50) {
+            gameState = "lose_anim"; // 觸發死亡動畫
+            deadAnimTimer = 60;      // 設定動畫時間約 1 秒 (60 幀)
+          }
+          shakeTimer = 15; // 觸發畫面震動回饋
+          // 紅色閃爍效果
+          push();
+          fill(255, 0, 0, 100);
+          rect(pX, pY, pW, pH);
+          pop();
+          // 飄出 -20 特效
+          floatingTexts.push({ x: items[i].x, y: items[i].y, text: "-20", alpha: 255, c: color(255, 100, 100) });
+        }
+        items.splice(i, 1); // 碰到後消失
+      } 
+      else if (items[i].isOffScreen()) {
+        items.splice(i, 1); // 掉出螢幕後消失
       }
-      items.splice(i, 1); // 碰到後消失
-    } 
-    else if (items[i].isOffScreen()) {
-      items.splice(i, 1); // 掉出螢幕後消失
+    }
+  }
+
+  // --- 新增：繪製飄浮文字特效 ---
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    let ft = floatingTexts[i];
+    if (gameState === "playing" || gameState === "cheat_anim") {
+      ft.y -= 2; // 向上飄
+      ft.alpha -= 5; // 逐漸透明
+    }
+    push();
+    fill(ft.c.levels[0], ft.c.levels[1], ft.c.levels[2], ft.alpha);
+    textSize(24);
+    textStyle(BOLD);
+    textAlign(CENTER, CENTER);
+    text(ft.text, ft.x, ft.y);
+    pop();
+    
+    if (ft.alpha <= 0) {
+      floatingTexts.splice(i, 1);
     }
   }
 
@@ -681,16 +1208,48 @@ function runGameOne(pX, pY, pW, pH) {
   textAlign(LEFT, TOP);
   text("獎勵積分: " + score, pX + 10, pY + 10);
   textAlign(CENTER, TOP);
-  text("行為主義：獲得 100 分", pX + pW/2, pY + 10);
+  text("行為主義：獲得 100 分 (低於 -50 失敗)", pX + pW/2, pY + 10);
 
   // 顯示計時器
   textAlign(RIGHT, TOP);
-  fill(255, 200, 0);
-  text("時間: " + countdown, pX + pW - 10, pY + 10);
+  if (countdown <= 10 && countdown > 0) {
+    fill(255, 50, 50, map(sin(frameCount * 0.5), -1, 1, 100, 255)); // 倒數 10 秒紅色閃爍警報
+  } else {
+    fill(255, 200, 0); // 正常黃色
+  }
+  text("⏳ 時間: " + countdown, pX + pW - 10, pY + 10);
 
+  // 新增：時間進度條
+  let barW = 80;
+  let barH = 8;
+  let barX = pX + pW - 10 - barW; // 對齊文字右邊
+  let barY = pY + 10 + 14 + 5; // 在文字下方 + 文字大小 + 額外間距
+  let maxTime = 30; // 遊戲一總時長
+
+  // 進度條顏色與閃爍
+  let barColor = color(0, 200, 255); // 預設水藍色
+  if (countdown <= 10 && countdown > 0) {
+    barColor = color(255, 50, 50, map(sin(frameCount * 0.5), -1, 1, 100, 255)); // 紅色閃爍
+  }
+
+  stroke(barColor);
+  strokeWeight(1);
+  noFill();
+  rect(barX, barY, barW, barH, 2); // 進度條外框
+  fill(barColor);
+  rect(barX + 1, barY + 1, map(countdown, 0, maxTime, 0, barW - 2), barH - 2); // 進度條填充
   textAlign(CENTER, BOTTOM);
   textSize(10);
   text("起司 = +10 | 電擊 = -20", pX + pW/2, pY + pH - 10);
+
+  textAlign(LEFT, BOTTOM);
+  fill(255, 200, 0);
+  textSize(12);
+  text("🖐 張開五指可暫停", pX + 10, pY + pH - 10);
+
+  if (gameState === "paused") {
+    drawPauseScreen(pX, pY, pW, pH);
+  }
 
   // 手部游標輔助
   noFill();
@@ -710,6 +1269,10 @@ class MemoryCard {
     this.matched = false;
     this.scaleX = 1.0; // 用於翻轉動畫的水平縮放值 (1 為背面, -1 為正面)
     this.matchAnimTimer = 0; // 配對成功動畫計時器
+    this.vx = 0; // 用於失敗掉落動畫的 X 速度
+    this.vy = 0; // 用於失敗掉落動畫的 Y 速度
+    this.rot = 0; // 用於失敗掉落動畫的旋轉角度
+    this.rotSpeed = 0; // 旋轉速度
   }
 
   display() {
@@ -745,6 +1308,8 @@ class MemoryCard {
     // 將座標系統移到卡片中心點，方便進行中心縮放
     translate(this.x + this.w / 2, this.y + this.h / 2 + offsetY);
     
+    rotate(this.rot); // 加上旋轉 (用於失敗掉落動畫)
+
     // --- 優化：模擬 3D 透視放大 ---
     // 當卡片轉向側面時，同時稍微放大，產生往鏡頭靠近的 3D 錯覺
     let popScale = 1.0 + flipProgress * 0.15; // 最高放大 15%
@@ -788,6 +1353,8 @@ class MemoryCard {
       textSize(24);
       text("?", 0, 0);
     }
+    drawingContext.shadowBlur = 0; // 關閉發光效果避免影響效能
+    drawingContext.shadowOffsetY = 0;
     pop();
   }
 
@@ -795,8 +1362,8 @@ class MemoryCard {
     if (dist(px, py, this.x + this.w/2, this.y + this.h/2) < this.w/2) {
       // 優化：改為「觸發式」翻牌 (Pinch Trigger)
       // 只有在這一影格剛捏合，且上一影格沒捏合時才觸發
-      let pinchTrigger = isPinching && !isPinchingPrev;
-      if (!this.flipped && !this.matched && !lockBoard && pinchTrigger) {
+      let actionTrigger = (isPinching && !isPinchingPrev);
+      if (!this.flipped && !this.matched && !lockBoard && actionTrigger) {
         this.flipped = true;
         return true; 
       }
@@ -810,16 +1377,82 @@ function runGameTwo(pX, pY, pW, pH) {
   if (gameState === "intro") {
     let theoryText = "理論背景：訊息處理論。學習涉及訊息的編碼、儲存與檢索。配對相同卡片的過程模擬了大腦如何辨識特徵，並將短期記憶中的資訊與長期記憶中的既有架構進行聯結。";
     drawIntroScreen("認知主義", 
-                    "配對所有卡片以完成資訊編碼。", 
+                    "配對所有卡片以完成資訊編碼 (翻錯 3 次失敗)。", 
                     "捏合手勢進行翻牌。", 
                     theoryText,
                     pX, pY, pW, pH);
     return;
   }
 
-  if (gameState !== "playing") {
+  // --- 新增：播放失敗爆裂動畫中 ---
+  if (gameState === "lose_anim") {
+    deadAnimTimer--;
+    
+    // 觸發瞬間：賦予所有卡牌隨機爆發力與震動
+    if (deadAnimTimer === 59) {
+      shakeTimer = 30; // 畫面強烈震盪
+      for (let c of cards) {
+        c.vx = random(-15, 15);
+        c.vy = random(-20, -5); // 向上炸開拋起
+        c.rotSpeed = random(-0.3, 0.3); // 旋轉亂飛
+      }
+    }
+    
+    // 更新卡牌物理位置 (天女散花掉落)
+    for (let c of cards) {
+      c.x += c.vx;
+      c.y += c.vy;
+      c.vy += 1.5; // 重力加速度往下墜
+      c.rot += c.rotSpeed;
+    }
+
+    if (deadAnimTimer <= 0) {
+      gameState = "lose"; // 動畫結束，進入結算畫面
+    }
+  }
+
+  if (gameState !== "playing" && gameState !== "lose_anim" && gameState !== "paused" && gameState !== "cheat_anim") {
     drawEndScreen(pX, pY, pW, pH);
     return;
+  }
+
+  // --- 新增：手勢觸發暫停 ---
+  if (gameState === "playing" && isHandOpen && !isHandOpenPrev) {
+    gameState = "paused";
+  }
+
+  // --- 新增：隱藏密技 (比讚無敵過關) ---
+  if (gameState === "playing" && isThumbsUp && !isThumbsUpPrev) {
+    gameState = "cheat_anim";
+    cheatTimer = 180; // 觸發跑馬燈與回溯
+    shakeTimer = 30;  // 觸發畫面震動
+    // 卡牌進入回溯旋轉狀態
+    for (let c of cards) {
+      c.flipped = false;
+      c.matched = false;
+      c.rotSpeed = random(-0.3, 0.3);
+    }
+  }
+
+  if (gameState === "cheat_anim") {
+    for (let c of cards) {
+      c.rot += c.rotSpeed; // 瘋狂旋轉
+      c.x += random(-3, 3); // 雜訊抖動
+      c.y += random(-3, 3);
+    }
+    if (cheatTimer <= 0) {
+      matchCount = 3;
+      for (let c of cards) {
+        c.flipped = true;
+        c.matched = true;
+        c.rot = 0;
+      }
+      gameState = "win";
+      stampAnimTimer = 60; // 觸發蓋章動畫
+      achievements[1] = true;
+      let timeSpent = 45 - countdown;
+      if (bestTimes[1] === null || timeSpent < bestTimes[1]) bestTimes[1] = timeSpent;
+    }
   }
 
   updateCountdown();
@@ -830,6 +1463,13 @@ function runGameTwo(pX, pY, pW, pH) {
   scale(-1, 1);
   image(video, 0, 0, pW, pH);
   pop();
+
+  // 失敗時的紅色閃爍特效
+  if (gameState === "lose_anim" && deadAnimTimer > 40) {
+    fill(255, 0, 0, map(deadAnimTimer, 60, 40, 200, 0));
+    noStroke();
+    rect(pX, pY, pW, pH);
+  }
 
   // B. 手部游標顯示
   if (isPinching) {
@@ -847,13 +1487,15 @@ function runGameTwo(pX, pY, pW, pH) {
   // C. 處理所有卡牌
   for (let i = 0; i < cards.length; i++) {
     cards[i].display();
-    if (cards[i].update(mouseX_pos, mouseY_pos)) {
-      checkMatching();
+    if (gameState === "playing") { // 確保暫停時無法翻牌
+      if (cards[i].update(mouseX_pos, mouseY_pos)) {
+        checkMatching();
+      }
     }
   }
 
   // D. 處理配對失敗的自動關牌 (計時器)
-  if (cardsToClose.length > 0) {
+  if (gameState === "playing" && cardsToClose.length > 0) {
     matchTimer++;
     if (matchTimer > 60) { // 顯示 1 秒後關掉
       for (let c of cardsToClose) c.flipped = false;
@@ -871,8 +1513,43 @@ function runGameTwo(pX, pY, pW, pH) {
 
   // 顯示計時器
   textAlign(RIGHT, TOP);
+  if (countdown <= 10 && countdown > 0) {
+    fill(255, 50, 50, map(sin(frameCount * 0.5), -1, 1, 100, 255)); // 倒數 10 秒紅色閃爍警報
+  } else {
+    fill(255, 200, 0); // 正常黃色
+  }
+  text("⏳ 時間: " + countdown, pX + pW - 10, pY + 10);
+
+  // 新增：時間進度條
+  let barW = 80;
+  let barH = 8;
+  let barX = pX + pW - 10 - barW; // 對齊文字右邊
+  let barY = pY + 10 + 14 + 5; // 在文字下方 + 文字大小 + 額外間距
+  let maxTime = 45; // 遊戲二總時長
+
+  // 進度條顏色與閃爍
+  let barColor = color(0, 200, 255); // 預設水藍色
+  if (countdown <= 10 && countdown > 0) {
+    barColor = color(255, 50, 50, map(sin(frameCount * 0.5), -1, 1, 100, 255)); // 紅色閃爍
+  }
+
+  stroke(barColor);
+  strokeWeight(1);
+  noFill();
+  rect(barX, barY, barW, barH, 2); // 進度條外框
+  fill(barColor);
+  rect(barX + 1, barY + 1, map(countdown, 0, maxTime, 0, barW - 2), barH - 2); // 進度條填充
+
+  // 顯示失誤次數
+  if (mistakeCount > 0) {
+    fill(255, 50, 50);
+    text("失誤: " + mistakeCount + " / 3", pX + pW - 10, pY + 30);
+  }
+
+  textAlign(LEFT, BOTTOM);
   fill(255, 200, 0);
-  text("時間: " + countdown, pX + pW - 10, pY + 10);
+  textSize(12);
+  text("🖐 張開五指可暫停", pX + 10, pY + pH - 10);
 
   // --- 新增：配對進度條 ---
   let progressW = pW * 0.6;
@@ -899,8 +1576,15 @@ function runGameTwo(pX, pY, pW, pH) {
   let percent = floor((matchCount / 3) * 100);
   text("資訊編碼進度: " + percent + "%", pX + pW / 2, progressY - 5);
 
-  if (matchCount === 3) {
+  if (matchCount === 3 && gameState === "playing") {
     gameState = "win";
+    achievements[1] = true; // 解鎖認知主義成就
+    let timeSpent = 45 - countdown; // 計算花費時間
+    if (bestTimes[1] === null || timeSpent < bestTimes[1]) bestTimes[1] = timeSpent;
+  }
+
+  if (gameState === "paused") {
+    drawPauseScreen(pX, pY, pW, pH);
   }
 }
 
@@ -920,9 +1604,15 @@ function checkMatching() {
       matchCount++;
     } else {
       // 配對失敗
-      lockBoard = true;
-      cardsToClose = [flipped[0], flipped[1]];
-      matchTimer = 0; // 關鍵：確保計時器從 0 開始，避免直接跳過顯示時間
+      mistakeCount++;
+      if (mistakeCount >= 3) {
+        gameState = "lose_anim"; // 觸發炸裂失敗動畫
+        deadAnimTimer = 60;
+      } else {
+        lockBoard = true;
+        cardsToClose = [flipped[0], flipped[1]];
+        matchTimer = 0; // 確保計時器從 0 開始
+      }
     }
   }
 }
@@ -945,6 +1635,7 @@ function initGameTwo(pX, pY, pW, pH) {
     cards.push(new MemoryCard(pX + pW*0.1 + col*pW*0.3, pY + pH*0.15 + row*pH*0.4, cW, cH, types[i]));
   }
   matchCount = 0;
+  mistakeCount = 0;  // 重置失誤次數
   lockBoard = false;
   cardsToClose = []; // 初始化時清空待關閉清單
   matchTimer = 0;    // 初始化時重置計時器
@@ -954,14 +1645,17 @@ function initGameTwo(pX, pY, pW, pH) {
 class ConstructBlock {
   constructor(pX, pY, pW, pH, label) {
     this.pX = pX; this.pY = pY; this.pW = pW; this.pH = pH;
-    this.w = 60;
-    this.h = 30;
+    this.w = 100; // 放大積木寬度
+    this.h = 40;  // 放大積木高度
     this.x = random(pX, pX + pW - this.w);
     this.y = random(pY, pY + pH / 2);
     this.label = label;
     this.col = color(random(100, 255), random(100, 255), random(100, 255));
     this.vx = random(-1, 1); // 隨機飄動速度
     this.vy = random(-1, 1);
+    
+    this.rot = 0;      // 新增：用於失敗崩塌動畫的旋轉角度
+    this.rotSpeed = 0; // 新增：用於失敗崩塌動畫的旋轉速度
 
     // 新增：物理運動屬性
     this.isFalling = false;
@@ -1005,22 +1699,26 @@ class ConstructBlock {
   }
 
   display() {
+    push();
+    translate(this.x + this.w / 2, this.y + this.h / 2); // 移至中心點
+    rotate(this.rot); // 支援旋轉動畫
     fill(this.col);
     stroke(255);
     strokeWeight(1);
-    rect(this.x, this.y, this.w, this.h, 3);
+    rect(-this.w / 2, -this.h / 2, this.w, this.h, 3); // 原點改在中心
     fill(0);
     noStroke();
-    textSize(8);
+    textSize(12); // 配合積木放大文字
     textAlign(CENTER, CENTER);
-    text(this.label, this.x + this.w / 2, this.y + this.h / 2);
+    text(this.label, 0, 0);
+    pop();
   }
 }
 
 // --- 遊戲三：核心邏輯 Function ---
 function runGameThree(pX, pY, pW, pH) {
   if (gameState === "intro") {
-    let theoryText = "理論背景：社會建構主義。知識並非被動接收，而是由學習者主動建構的。透過親手捕捉與堆疊「經驗」與「反思」等積木，學習者正在將新資訊整合進自我的認知結構中。";
+    let theoryText = "理論背景：社會建構主義。\n知識並非被動接收，而是由學習者主動建構的。\n透過親手捕捉與堆疊「經驗」與「反思」等積木，\n學習者正在將新資訊整合進自我的認知結構中。";
     drawIntroScreen("建構主義", 
                     "搭建一座 4 層高的知識塔。", 
                     "捏合抓取，放開後堆疊。", 
@@ -1029,9 +1727,94 @@ function runGameThree(pX, pY, pW, pH) {
     return;
   }
 
-  if (gameState !== "playing") {
+  // --- 新增：播放失敗動畫中防護 (時間歸零時) ---
+  if (gameState === "lose_anim") {
+    deadAnimTimer--;
+    
+    // 觸發瞬間：賦予所有積木隨機爆發力與震動
+    if (deadAnimTimer === 59) {
+      shakeTimer = 30; // 畫面強烈震盪
+      let allBlocks = [...stackedBlocks, ...floatingBlocks];
+      if (heldBlock) allBlocks.push(heldBlock);
+      
+      for (let b of allBlocks) {
+        b.vx = random(-15, 15);
+        b.vy = random(-20, -5); // 向上炸開拋起
+        b.rotSpeed = random(-0.3, 0.3); // 旋轉亂飛
+      }
+    }
+    
+    // 更新積木崩塌物理
+    let allBlocks = [...stackedBlocks, ...floatingBlocks];
+    if (heldBlock) allBlocks.push(heldBlock);
+    
+    for (let b of allBlocks) {
+      b.x += b.vx;
+      b.y += b.vy;
+      b.vy += 1.5; // 重力加速度往下墜
+      b.rot += b.rotSpeed;
+    }
+
+    if (deadAnimTimer <= 0) {
+      gameState = "lose";
+    }
+  }
+
+  // --- 新增：播放過關光柱動畫中防護與集章 ---
+  if (gameState === "win_anim") {
+    winAnimTimer--;
+    if (winAnimTimer <= 0) {
+      gameState = "win";
+      stampAnimTimer = 60; // 觸發蓋章動畫
+    }
+  }
+
+  if (gameState !== "playing" && gameState !== "lose_anim" && gameState !== "win_anim" && gameState !== "paused" && gameState !== "cheat_anim") {
     drawEndScreen(pX, pY, pW, pH);
     return;
+  }
+
+  // --- 新增：手勢觸發暫停 ---
+  if (gameState === "playing" && isHandOpen && !isHandOpenPrev) {
+    gameState = "paused";
+  }
+
+  // --- 新增：隱藏密技 (比讚無敵過關) ---
+  if (gameState === "playing" && isThumbsUp && !isThumbsUpPrev) {
+    gameState = "cheat_anim";
+    cheatTimer = 180; // 觸發跑馬燈與回溯
+    shakeTimer = 30;  // 觸發畫面震動
+    // 所有積木強制解體往上飛散
+    let allBlocks = [...stackedBlocks, ...floatingBlocks];
+    if (heldBlock) { allBlocks.push(heldBlock); heldBlock = null; }
+    stackedBlocks = [];
+    floatingBlocks = allBlocks;
+    for (let b of floatingBlocks) {
+      b.isFalling = false;
+      b.vx = random(-8, 8);
+      b.vy = random(-15, -5);
+      b.rotSpeed = random(-0.2, 0.2);
+    }
+  }
+
+  if (gameState === "cheat_anim") {
+    if (cheatTimer <= 0) {
+      floatingBlocks = [];
+      stackedBlocks = [];
+      // 瞬間補齊積木，準備播放光柱過關動畫
+      while (stackedBlocks.length < 4) {
+        let b = new ConstructBlock(pX, pY, pW, pH, "CHEAT");
+        b.x = pX + pW / 2 - b.w / 2;
+        b.y = (pY + pH - 20) - (stackedBlocks.length + 1) * b.h;
+        b.rot = 0;
+        stackedBlocks.push(b);
+      }
+      gameState = "win_anim";
+      winAnimTimer = 90;
+      achievements[2] = true;
+      let timeSpent = 60 - countdown;
+      if (bestTimes[2] === null || timeSpent < bestTimes[2]) bestTimes[2] = timeSpent;
+    }
   }
 
   updateCountdown();
@@ -1054,60 +1837,118 @@ function runGameThree(pX, pY, pW, pH) {
   for (let j = pY; j < pY + pH; j += 40) line(pX, j, pX + pW, j);
   pop();
 
+  // 失敗時的紅色閃爍特效
+  if (gameState === "lose_anim" && deadAnimTimer > 40) {
+    fill(255, 0, 0, map(deadAnimTimer, 60, 40, 200, 0));
+    noStroke();
+    rect(pX, pY, pW, pH);
+  }
+
   // B. 繪製地基
   fill(40, 50, 60);
   rect(pX + pW*0.2, pY + pH - 20, pW*0.6, 20);
 
   // C. 處理飄浮積木
   for (let i = floatingBlocks.length - 1; i >= 0; i--) {
-    floatingBlocks[i].update();
+    if (gameState === "playing") {
+      floatingBlocks[i].update();
+    } else if (gameState === "cheat_anim") {
+      // 作弊回溯動畫：積木反重力向上飛散並旋轉
+      floatingBlocks[i].x += floatingBlocks[i].vx;
+      floatingBlocks[i].y += floatingBlocks[i].vy;
+      floatingBlocks[i].rot += floatingBlocks[i].rotSpeed;
+    }
     floatingBlocks[i].display();
 
-    // 建構主義核心：手部捏合(Pinching)才能抓起積木
-    if (heldBlock === null && isPinching) {
-      let d = dist(mouseX_pos, mouseY_pos, floatingBlocks[i].x + 30, floatingBlocks[i].y + 15);
-      if (d < 35) {
-        heldBlock = floatingBlocks[i];
-        floatingBlocks.splice(i, 1);
+    if (gameState === "playing") {
+      // 建構主義核心：手部捏合(Pinching)才能抓起積木
+      let isActionPressed = isPinching;
+      if (heldBlock === null && isActionPressed) {
+        let d = dist(mouseX_pos, mouseY_pos, floatingBlocks[i].x + 50, floatingBlocks[i].y + 20); // 配合放大調整判定中心
+        if (d < 55) { // 放大抓取範圍
+          heldBlock = floatingBlocks[i];
+          floatingBlocks.splice(i, 1);
+        }
       }
     }
   }
 
   // D. 處理手中抓著的積木
   if (heldBlock !== null) {
-    if (heldBlock.isFalling) {
-      // 更新掉落動畫
-      if (heldBlock.update()) {
-        stackedBlocks.push(heldBlock); // 落地後正式加入堆疊
-        heldBlock = null;
-        shakeTimer = 10; // 落地震動回饋
+    if (gameState === "playing") {
+      if (heldBlock.isFalling) {
+        // 更新掉落動畫
+        if (heldBlock.update()) {
+          stackedBlocks.push(heldBlock); // 落地後正式加入堆疊
+          heldBlock = null;
+          shakeTimer = 10; // 落地震動回饋
+        } else {
+          heldBlock.display();
+        }
       } else {
+        // 被抓取中
+        heldBlock.x = mouseX_pos - 50; // 配合放大調整抓取點
+        heldBlock.y = mouseY_pos - 20;
         heldBlock.display();
+        
+        // 游標指示
+        fill(255, 0, 0);
+        ellipse(mouseX_pos, mouseY_pos, 10, 10);
+
+        let isActionPressed = isPinching;
+        // 只有放開捏合手勢 (!isPinching) 且在底部區域積木才會落下
+        if (!isActionPressed && heldBlock.y > pY + pH/2) {
+          heldBlock.isFalling = true;
+          heldBlock.velocityY = 0;
+          // 動態計算目標落點 Y (地基高度 - 已堆疊積木總高度)
+          heldBlock.targetY = (pY + pH - 20) - (stackedBlocks.length + 1) * heldBlock.h;
+          heldBlock.x = pX + pW / 2 - heldBlock.w / 2; // 自動置中對齊
+        }
       }
     } else {
-      // 被抓取中
-      heldBlock.x = mouseX_pos - 30;
-      heldBlock.y = mouseY_pos - 15;
-      heldBlock.display();
-      
-      // 游標指示
-      fill(255, 0, 0);
-      ellipse(mouseX_pos, mouseY_pos, 10, 10);
-
-      // 只有放開捏合手勢 (!isPinching) 且在底部區域積木才會落下
-      if (!isPinching && heldBlock.y > pY + pH/2) {
-        heldBlock.isFalling = true;
-        heldBlock.velocityY = 0;
-        // 動態計算目標落點 Y (地基高度 - 已堆疊積木總高度)
-        heldBlock.targetY = (pY + pH - 20) - (stackedBlocks.length + 1) * heldBlock.h;
-        heldBlock.x = pX + pW / 2 - heldBlock.w / 2; // 自動置中對齊
-      }
+      heldBlock.display(); // 動畫播放時僅顯示，物理狀態會由上方統一控制
     }
   }
 
   // E. 繪製已堆疊的積木
   for (let b of stackedBlocks) {
     b.display();
+  }
+
+  // --- 新增：金色光柱過關特效 ---
+  if (gameState === "win_anim") {
+    push();
+    let maxBeamH = pH;
+    // 動畫：高度隨時間從 0 成長到 maxBeamH (約 0.75 秒升到頂)
+    let currentBeamH = map(winAnimTimer, 90, 45, 0, maxBeamH);
+    currentBeamH = constrain(currentBeamH, 0, maxBeamH);
+    
+    let beamX = pX + pW * 0.2;
+    let beamW = pW * 0.6;
+    let beamY = (pY + pH - 20) - currentBeamH; // 由下往上畫
+    
+    drawingContext.shadowBlur = 30;
+    drawingContext.shadowColor = "rgba(255, 215, 0, 1)";
+    
+    // 外層金色光芒 (帶有脈衝閃爍感)
+    fill(255, 215, 0, 150 + sin(frameCount * 0.2) * 50); 
+    noStroke();
+    rect(beamX, beamY, beamW, currentBeamH, 5); 
+    
+    // 內層高光白柱
+    drawingContext.shadowBlur = 10;
+    fill(255, 255, 220, 200);
+    rect(beamX + beamW * 0.2, beamY, beamW * 0.6, currentBeamH, 5);
+    
+    // 飄升的光輝粒子
+    for (let i = 0; i < 5; i++) {
+      fill(255, 255, 0, random(100, 255));
+      let particleX = random(beamX, beamX + beamW);
+      let particleY = random(beamY, pY + pH - 20); // 確保粒子只在光柱範圍內
+      ellipse(particleX, particleY, random(3, 8));
+    }
+    drawingContext.shadowBlur = 0; // 關閉發光效果避免影響效能
+    pop();
   }
 
   // F. 介面文字
@@ -1118,11 +1959,44 @@ function runGameThree(pX, pY, pW, pH) {
 
   // 顯示計時器
   textAlign(RIGHT, TOP);
-  fill(255, 200, 0);
-  text("時間: " + countdown, pX + pW - 20, pY + 20);
+  if (countdown <= 10 && countdown > 0) {
+    fill(255, 50, 50, map(sin(frameCount * 0.5), -1, 1, 100, 255)); // 倒數 10 秒紅色閃爍警報
+  } else {
+    fill(255, 200, 0); // 正常黃色
+  }
+  text("⏳ 時間: " + countdown, pX + pW - 20, pY + 20);
+
+  // 新增：時間進度條
+  let barW = 100;
+  let barH = 8;
+  let barX = pX + pW - 20 - barW; // 對齊文字右邊
+  let barY = pY + 20 + 24 + 5; // 在文字下方 + 文字大小 + 額外間距
+  let maxTime = 60; // 遊戲三總時長
+
+  // 進度條顏色與閃爍
+  let barColor = color(0, 200, 255); // 預設水藍色
+  if (countdown <= 10 && countdown > 0) {
+    barColor = color(255, 50, 50, map(sin(frameCount * 0.5), -1, 1, 100, 255)); // 紅色閃爍
+  }
+
+  stroke(barColor);
+  strokeWeight(1);
+  noFill();
+  rect(barX, barY, barW, barH, 2); // 進度條外框
+  fill(barColor);
+  rect(barX + 1, barY + 1, map(countdown, 0, maxTime, 0, barW - 2), barH - 2); // 進度條填充
   
-  if (stackedBlocks.length >= 4) {
-    gameState = "win";
+  textAlign(LEFT, BOTTOM);
+  fill(255, 200, 0);
+  textSize(12);
+  text("🖐 張開五指可暫停", pX + 10, pY + pH - 10);
+
+  if (stackedBlocks.length >= 4 && gameState === "playing") {
+    gameState = "win_anim";
+    winAnimTimer = 90; // 設定 1.5 秒光柱升起動畫
+    achievements[2] = true; // 解鎖建構主義成就
+    let timeSpent = 60 - countdown; // 計算花費時間
+    if (bestTimes[2] === null || timeSpent < bestTimes[2]) bestTimes[2] = timeSpent;
   }
 
   // 繪製手部游標 (空手或積木掉落中)
@@ -1130,6 +2004,10 @@ function runGameThree(pX, pY, pW, pH) {
     fill(isPinching ? color(255, 0, 0) : color(0, 200, 255));
     noStroke();
     ellipse(mouseX_pos, mouseY_pos, isPinching ? 15 : 20, isPinching ? 15 : 20);
+  }
+
+  if (gameState === "paused") {
+    drawPauseScreen(pX, pY, pW, pH);
   }
 }
 
@@ -1149,8 +2027,10 @@ function handleMenuSelection(pX, pY, pW, pH) {
     currentScene = 1;
     score = 0;
     items = [];
+    floatingTexts = []; // 清空飄浮文字
     countdown = 30; // 行為主義給 30 秒
     gameState = "intro";
+    deadAnimTimer = 0; // 重置死亡動畫計時器
   } else if (menuSelection === 1) {
     currentScene = 2;
     initGameTwo(pX, pY, pW, pH);
@@ -1161,6 +2041,14 @@ function handleMenuSelection(pX, pY, pW, pH) {
     initGameThree(pX, pY, pW, pH);
     countdown = 60; // 建構主義給 60 秒
     gameState = "intro";
+    winAnimTimer = 0; // 重置光柱動畫計時器
+  } else if (menuSelection === 3) {
+    // 重置遊戲進度 (隱藏按鈕功能)
+    achievements = [false, false, false];
+    bestTimes = [null, null, null];
+    currentScene = -1; // 踢回最一開始的起點畫面
+    menuSelection = 0;
+    shakeTimer = 20; // 震動畫面給予清除紀錄的回饋
   }
   // 重置狀態，避免連續觸發
   isPinching = false;
@@ -1175,6 +2063,10 @@ function drawBootScreen(pX, pY, pW, pH) {
   rect(pX, pY, pW, pH);
   pop();
 
+  // --- 新增：視差 (Parallax) 3D 透視特效 ---
+  let offsetX = constrain(map(mouseX_pos, pX, pX + pW, -20, 20), -20, 20);
+  let offsetY = constrain(map(mouseY_pos, pY, pY + pH, -20, 20), -20, 20);
+
   // 未偵測到手部的提示
   if (modelLoaded && predictions.length === 0) {
     fill(255, 50, 50);
@@ -1184,34 +2076,45 @@ function drawBootScreen(pX, pY, pW, pH) {
   }
 
   push();
+  // --- UI 最上層：標題 (位移最大) ---
+  push();
+  translate(offsetX * 1.5, offsetY * 1.5);
   textAlign(CENTER, CENTER);
   fill(0, 200, 255);
   textSize(60); // 放大全螢幕標題
   text("教育心理學博物館", pX + pW / 2, pY + pH * 0.35);
+  pop();
   
+  // --- UI 中層：內文說明 (基準位移) ---
+  push();
+  translate(offsetX * 1.0, offsetY * 1.0);
+  textAlign(CENTER, CENTER);
   fill(200, 200, 255);
   textSize(24); // 放大內文說明
   text("歡迎來到復古教育機台！\n\n在這裡，我們將透過三個經典的互動小遊戲\n帶您親身體驗 行為主義、認知主義 與 建構主義。", pX + pW / 2, pY + pH * 0.55);
+  pop();
 
-  // 進入機台按鈕
+  // --- UI 底層：進入按鈕與說明 (位移最小，並同步修改碰撞判定區域) ---
   let btnW = 240;
   let btnH = 60;
-  let btnX = pX + (pW - btnW) / 2;
-  let btnY = pY + pH * 0.75;
+  let btnX = pX + (pW - btnW) / 2 + offsetX * 0.5;
+  let btnY = pY + pH * 0.75 + offsetY * 0.5;
   let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
 
+  textAlign(CENTER, CENTER);
   fill(255, 200, 0);
   textSize(18);
-  text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", pX + pW / 2, btnY - 20);
+  text("💡 將游標移至按鈕並「捏合 (Pinch)」停留", btnX + btnW / 2, btnY - 20);
 
   if (isHovering) {
     fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
     rect(btnX, btnY, btnW, btnH, 10);
     fill(0);
     textSize(24);
-    text("進入機台", pX + pW / 2, btnY + 30);
+    text("進入機台", btnX + btnW / 2, btnY + 30);
 
-    if (isPinching && predictions.length > 0) {
+    let isActionTriggered = (isPinching && predictions.length > 0);
+    if (isActionTriggered) {
       confirmTimer++;
       fill(255, 255, 0);
       let barW = map(confirmTimer, 0, confirmThreshold, 0, btnW - 10);
@@ -1231,7 +2134,7 @@ function drawBootScreen(pX, pY, pW, pH) {
     noStroke();
     fill(0, 200, 255);
     textSize(24);
-    text("進入機台", pX + pW / 2, btnY + 30);
+    text("進入機台", btnX + btnW / 2, btnY + 30);
     confirmTimer = Math.max(0, confirmTimer - 2);
   }
   pop();
@@ -1250,6 +2153,11 @@ function drawMenu(pX, pY, pW, pH) {
   rect(0, 0, pW, pH);
   pop();
 
+  // --- 新增：視差 (Parallax) 3D 透視特效 ---
+  // 根據手部游標相對於螢幕中心的位置，計算出位移量
+  let offsetX = constrain(map(mouseX_pos, pX, pX + pW, -20, 20), -20, 20);
+  let offsetY = constrain(map(mouseY_pos, pY, pY + pH, -20, 20), -20, 20);
+
   // --- 新增：未偵測到手部的提示 ---
   if (predictions.length === 0) {
     fill(255, 50, 50);
@@ -1258,46 +2166,90 @@ function drawMenu(pX, pY, pW, pH) {
     text("尚未偵測到手部，請將手移入畫面", pX + pW/2, pY + 60);
   }
 
+  // --- UI 最上層：標題 (位移最大，看起來最靠近玩家) ---
+  push();
+  translate(offsetX * 1.5, offsetY * 1.5);
   fill(0, 200, 255);
   textAlign(CENTER, TOP);
   textSize(32); // 放大選單標題
   text("選擇學習關卡", pX + pW/2, pY + 30);
   
+  // --- 新增：大師成就解鎖提示 (當三個關卡都為 true 時觸發) ---
+  if (achievements[0] && achievements[1] && achievements[2]) {
+    push();
+    drawingContext.shadowBlur = 15;
+    drawingContext.shadowColor = "rgba(255, 200, 0, 1)";
+    fill(255, 200, 0);
+    textSize(18);
+    text("🏅 恭喜獲得「教育心理學大師」稱號！", pX + pW/2, pY + 70);
+    drawingContext.shadowBlur = 0; // 重置發光效果，避免引發效能崩潰當機
+    pop();
+  }
+  pop(); // 結束標題層
+
+  // --- UI 中層：選項按鈕 (基準位移) ---
+  push();
+  translate(offsetX * 1.0, offsetY * 1.0);
+  textAlign(CENTER, TOP); // 確保文字對齊不受前一層 pop 影響
   let menuItems = ["1. 行為主義 (操作制約)", "2. 認知主義 (訊息處理)", "3. 建構主義 (知識搭建)"];
+  let allClear = achievements[0] && achievements[1] && achievements[2];
+  if (allClear) menuItems.push("▶ 系統重置 (清除所有進度)");
   
-  textSize(22); // 設定選單項目文字大小
+  let startY = pY + (allClear ? 90 : 100); // 如果有四個選項，把起始高度往上提一點
+  let spacing = allClear ? 55 : 70;        // 稍微縮小間距以容納四個按鈕
+  
+  textSize(allClear ? 20 : 22); // 設定選單項目文字大小
   for (let i = 0; i < menuItems.length; i++) {
-    let itemY = pY + 100 + i * 70; // 增加選項間距
+    let itemY = startY + i * spacing; 
+    // --- 新增：判斷是否已通關並在文字後方加上徽章與最快時間 ---
+    let displayText = menuItems[i];
+    if (i < 3 && achievements[i]) {
+      displayText += " [★ 已通關]";
+      if (bestTimes[i] !== null) {
+        displayText += ` (最快: ${bestTimes[i]}秒)`;
+      }
+    }
+    
+    let isResetBtn = (i === 3);
+    let baseColor = isResetBtn ? color(255, 80, 80) : color(0, 200, 255); // 重置按鈕改為紅色警告色
+    let pulseColor = isResetBtn ? color(255, 80, 80, map(sin(frameCount * 0.1), -1, 1, 100, 200)) : color(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
+
     if (i === menuSelection) {
       // 選中效果
       // 呼吸燈閃爍效果：利用 sin 函數讓透明度在 100 到 200 之間變化
-      fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
-      rect(pX + 20, itemY, pW - 40, 50, 5); // 加高選中框
+      fill(pulseColor);
+      rect(pX + 20, itemY, pW - 40, 45, 5); // 加高選中框
       
       // 繪製蓄力進度條
       if (confirmTimer > 0) {
         fill(255, 255, 0);
         let barW = map(confirmTimer, 0, confirmThreshold, 0, pW - 60);
-        rect(pX + 30, itemY + 40, barW, 6); // 進度條加粗並下移
+        rect(pX + 30, itemY + 36, barW, 6); // 進度條加粗並下移
       }
 
       fill(0);
-      text("> " + menuItems[i] + " <", pX + pW/2, itemY + 14);
+      text("> " + displayText + " <", pX + pW/2, itemY + 12);
     } else {
       // 未選中效果
-      stroke(0, 200, 255);
+      stroke(baseColor);
       noFill();
-      rect(pX + 20, itemY, pW - 40, 50, 5); // 加高未選中框
+      rect(pX + 20, itemY, pW - 40, 45, 5); // 加高未選中框
       noStroke();
-      fill(0, 200, 255);
-      text(menuItems[i], pX + pW/2, itemY + 14);
+      fill(baseColor);
+      text(displayText, pX + pW/2, itemY + 12);
     }
   }
+  pop(); // 結束選項層
 
+  // --- UI 底層：操作說明 (位移最小，看起來在比較遠的地方) ---
+  push();
+  translate(offsetX * 0.5, offsetY * 0.5);
+  textAlign(CENTER, TOP); 
   textSize(18); // 放大操作說明文字
   fill(255, 200, 0);
   text("💡 上下移動手勢進行選單切換", pX + pW/2, pY + pH - 60);
   text("👉 捏合 (Pinch) 停留來確認", pX + pW/2, pY + pH - 30);
+  pop(); // 結束底層
 }
 
 function drawControls(screenX, screenW, screenY, screenH, consoleW) {
@@ -1306,31 +2258,132 @@ function drawControls(screenX, screenW, screenY, screenH, consoleW) {
   let controlAreaW = consoleW - screenW - (consoleW * 0.1);
   let dpadX = controlAreaX + (controlAreaW * 0.35);
   let dpadY = screenY + (screenH * 0.3);
+
+  // --- 新增：十字方向鍵 (D-Pad) 按壓狀態判定 ---
+  let dUp_hand = dist(mouseX_pos, mouseY_pos, dpadX, dpadY - 30);
+  let isPressedUp = (dUp_hand < 20 && isPinching) || keyIsDown(UP_ARROW);
+
+  let dDown_hand = dist(mouseX_pos, mouseY_pos, dpadX, dpadY + 30);
+  let isPressedDown = (dDown_hand < 20 && isPinching) || keyIsDown(DOWN_ARROW);
+
+  let dLeft_hand = dist(mouseX_pos, mouseY_pos, dpadX - 30, dpadY);
+  let isPressedLeft = (dLeft_hand < 20 && isPinching) || keyIsDown(LEFT_ARROW);
+
+  let dRight_hand = dist(mouseX_pos, mouseY_pos, dpadX + 30, dpadY);
+  let isPressedRight = (dRight_hand < 20 && isPinching) || keyIsDown(RIGHT_ARROW);
+
+  let anyDPadPressed = isPressedUp || isPressedDown || isPressedLeft || isPressedRight;
+  let offsetDPad = anyDPadPressed ? 3 : 0;
+
   noStroke();
-  fill(25, 25, 30); 
-  rect(dpadX - 15, dpadY - 45, 30, 90, 5);
-  rect(dpadX - 45, dpadY - 15, 90, 30, 5);
-  fill(40, 40, 45);
-  ellipse(dpadX, dpadY, 15, 15);
+  // 1. 十字鍵底部深色陰影 (固定不動，增加立體感)
+  fill(15, 15, 20); 
+  rect(dpadX - 15, dpadY - 45 + 3, 30, 90, 5);
+  rect(dpadX - 45, dpadY - 15 + 3, 90, 30, 5);
+
+  // 2. 十字鍵主體 (根據按壓狀態位移與變暗)
+  fill(anyDPadPressed ? color(15, 15, 20) : color(25, 25, 30));
+  rect(dpadX - 15, dpadY - 45 + offsetDPad, 30, 90, 5);
+  rect(dpadX - 45, dpadY - 15 + offsetDPad, 90, 30, 5);
+
+  // 3. 十字鍵中央凹槽
+  fill(anyDPadPressed ? color(30, 30, 35) : color(40, 40, 45));
+  ellipse(dpadX, dpadY + offsetDPad, 15, 15);
+
+  // --- 新增：十字鍵防滑條紋 (Anti-slip Grip) ---
+  push();
+  strokeWeight(1);
+  let stripeShadow = color(10, 10, 15);
+  let stripeHighlight = color(60, 60, 70);
+
+  // 定義橫向條紋 (上下鍵用)
+  let drawHStripe = (x, y) => {
+    stroke(stripeShadow); line(x - 8, y + offsetDPad, x + 8, y + offsetDPad);
+    stroke(stripeHighlight); line(x - 8, y + 1 + offsetDPad, x + 8, y + 1 + offsetDPad);
+  };
+  // 定義直向條紋 (左右鍵用)
+  let drawVStripe = (x, y) => {
+    stroke(stripeShadow); line(x, y - 8 + offsetDPad, x, y + 8 + offsetDPad);
+    stroke(stripeHighlight); line(x + 1, y - 8 + offsetDPad, x + 1, y + 8 + offsetDPad);
+  };
+
+  // 繪製各方向的 3 條防滑紋
+  drawHStripe(dpadX, dpadY - 36); drawHStripe(dpadX, dpadY - 31); drawHStripe(dpadX, dpadY - 26); // 上
+  drawHStripe(dpadX, dpadY + 26); drawHStripe(dpadX, dpadY + 31); drawHStripe(dpadX, dpadY + 36); // 下
+  drawVStripe(dpadX - 36, dpadY); drawVStripe(dpadX - 31, dpadY); drawVStripe(dpadX - 26, dpadY); // 左
+  drawVStripe(dpadX + 26, dpadY); drawVStripe(dpadX + 31, dpadY); drawVStripe(dpadX + 36, dpadY); // 右
+  pop();
+
+  // --- 新增：方向鍵刻痕箭頭 (Directional Arrows) 標示更清楚 ---
+  push();
+  fill(anyDPadPressed ? color(10, 10, 15) : color(20, 20, 25)); // 內凹深色刻痕
+  noStroke();
+  triangle(dpadX, dpadY - 22 + offsetDPad, dpadX - 4, dpadY - 14 + offsetDPad, dpadX + 4, dpadY - 14 + offsetDPad); // 上
+  triangle(dpadX, dpadY + 22 + offsetDPad, dpadX - 4, dpadY + 14 + offsetDPad, dpadX + 4, dpadY + 14 + offsetDPad); // 下
+  triangle(dpadX - 22, dpadY + offsetDPad, dpadX - 14, dpadY - 4 + offsetDPad, dpadX - 14, dpadY + 4 + offsetDPad); // 左
+  triangle(dpadX + 22, dpadY + offsetDPad, dpadX + 14, dpadY - 4 + offsetDPad, dpadX + 14, dpadY + 4 + offsetDPad); // 右
+  pop();
+
+  // 4. 被按下的方向給予微光提示 (增加按壓的視覺回饋)
+  if (isPressedUp) { fill(255, 255, 255, 30); rect(dpadX - 15, dpadY - 45 + offsetDPad, 30, 30, 5, 5, 0, 0); }
+  if (isPressedDown) { fill(255, 255, 255, 30); rect(dpadX - 15, dpadY + 15 + offsetDPad, 30, 30, 0, 0, 5, 5); }
+  if (isPressedLeft) { fill(255, 255, 255, 30); rect(dpadX - 45, dpadY - 15 + offsetDPad, 30, 30, 5, 0, 0, 5); }
+  if (isPressedRight) { fill(255, 255, 255, 30); rect(dpadX + 15, dpadY - 15 + offsetDPad, 30, 30, 0, 5, 5, 0); }
 
   // 復古紅色 A / B 按鈕
   let btnY = screenY + (screenH * 0.65);
   let btnX_A = controlAreaX + (controlAreaW * 0.75);
   let btnX_B = controlAreaX + (controlAreaW * 0.5);
   
+  // --- 新增：按鈕按壓狀態判定 (支援手勢捏合、滑鼠點擊、鍵盤 A/B 鍵) ---
+  let dA_hand = dist(mouseX_pos, mouseY_pos, btnX_A, btnY);
+  let isPressedA = (dA_hand < 20 && isPinching) || keyIsDown(65); // 65: 鍵盤 A 鍵
+
+  let dB_hand = dist(mouseX_pos, mouseY_pos, btnX_B, btnY + 10);
+  let isPressedB = (dB_hand < 20 && isPinching) || keyIsDown(66); // 66: 鍵盤 B 鍵
+
+  // 設定按下時的位移量
+  let offsetA = isPressedA ? 3 : 0;
+  let offsetB = isPressedB ? 3 : 0;
+
   fill(20, 20, 25); 
   ellipse(btnX_B + 2, btnY + 4 + 10, 40, 40);
   ellipse(btnX_A + 2, btnY + 4, 40, 40);
   
-  fill(200, 40, 40); 
-  ellipse(btnX_B, btnY + 10, 40, 40);
-  ellipse(btnX_A, btnY, 40, 40);
+  // 根據按壓狀態位移按鈕主體，並稍微變暗
+  fill(isPressedB ? color(150, 30, 30) : color(200, 40, 40)); 
+  ellipse(btnX_B + offsetB, btnY + 10 + offsetB, 40, 40);
+  
+  fill(isPressedA ? color(150, 30, 30) : color(200, 40, 40)); 
+  ellipse(btnX_A + offsetA, btnY + offsetA, 40, 40);
   
   fill(180, 185, 195);
   textSize(14);
   textAlign(CENTER, CENTER);
   text("B", btnX_B, btnY + 35);
   text("A", btnX_A, btnY + 25);
+
+  // --- 新增：喇叭孔 (Speaker Grills) ---
+  push();
+  noStroke();
+  let speakerX = dpadX - 25;
+  let speakerY = btnY + 90;
+  for (let i = 0; i < 6; i++) {
+    for (let j = 0; j < 4; j++) {
+      let offsetX = (j % 2 === 0) ? 0 : 8; // 交錯排列的網格孔設計
+      let hX = speakerX + i * 16 + offsetX;
+      let hY = speakerY + j * 12;
+      
+      // 1. 喇叭孔下緣高光 (營造內凹厚度感)
+      fill(100, 105, 115);
+      ellipse(hX, hY + 1.5, 6, 6);
+      
+      // 2. 喇叭內部深色孔洞
+      fill(15, 15, 20);
+      ellipse(hX, hY, 6, 6);
+    }
+  }
+  pop();
 }
 
 // 當按下按鍵時切換場景 (測試用)
@@ -1338,6 +2391,8 @@ function keyPressed() {
   if (key === 's' || key === 'S') {
     currentScene = 1;
     score = 0; // 重置分數
+    items = [];
+    floatingTexts = [];
   }
   if (key === 'd' || key === 'D') {
     currentScene = 2;
