@@ -116,7 +116,11 @@ function setup() {
     stampAnimTimer = 60; // 觸發蓋章動畫
     achievements[3] = true;
     sessionStorage.setItem('edu_achievements', JSON.stringify(achievements)); // 儲存進度
-    window.history.replaceState({}, document.title, window.location.pathname); // 清除網址參數
+    try {
+      window.history.replaceState({}, document.title, window.location.pathname); // 清除網址參數
+    } catch (e) {
+      console.warn("本地端執行時無法清除網址參數，已略過此步驟", e);
+    }
   }
 
   // 初始化攝像頭
@@ -569,8 +573,9 @@ function draw() {
     loadingProgress += (100 - loadingProgress) * 0.2; // 載入完成，瞬間跑到 100%
   }
 
-  // 只要還沒完全透明，就持續在最上層繪製載入畫面
-  if (loadingAlpha > 0) {
+  // 只要還沒完全透明，且不處於第四關結算畫面 (currentScene !== 4)，就持續在最上層繪製載入畫面
+  // 這樣從第四關回來時，就能跳過黑色的載入畫面，直接看到獲勝結算！
+  if (loadingAlpha > 0 && currentScene !== 4) {
     push();
     // 1. 新增純黑底色，完全遮擋底層的遊戲機畫面
     fill(0, loadingAlpha);
@@ -1007,6 +1012,11 @@ function drawEndScreen(pX, pY, pW, pH) {
       text(`🎉 總共花費時間：${totalTime} 秒 🎉`, pX + pW / 2, pY + pH * 0.20);
       drawingContext.shadowBlur = 0;
       
+      // 新增：全破提示文字 (取代原本的按鈕位置)
+      fill(255, 200, 200);
+      textSize(16);
+      text("所有關卡已完成，感謝您的遊玩！", pX + pW / 2, pY + pH * 0.82);
+
       // 8-bit 風格瘋狂灑紙花
       for (let i = 0; i < 8; i++) {
         fill(random(100, 255), random(100, 255), random(100, 255));
@@ -1025,7 +1035,9 @@ function drawEndScreen(pX, pY, pW, pH) {
   }
   
   // --- 確認按鈕 (僅在動畫播完後出現) ---
-  if (gameState === "lose" || (gameState === "win" && stampAnimTimer <= 0)) {
+  // 全破時隱藏按鈕，讓畫面永遠停留在獲勝結算卡上 (滿足「不要回起始頁」的需求)
+  let isFinalWin = (gameState === "win" && allClear);
+  if (gameState === "lose" || (gameState === "win" && stampAnimTimer <= 0 && !isFinalWin)) {
     let btnW = 160;
     let btnH = 45;
     let btnX = pX + (pW - btnW) / 2;
@@ -1051,7 +1063,7 @@ function drawEndScreen(pX, pY, pW, pH) {
       rect(btnX, btnY, btnW, btnH, 5);
       fill(0);
       textSize(16);
-      text(allClear ? "領取大師稱號" : "回主選單", pX + pW / 2, btnY + 22);
+      text("回主選單", pX + pW / 2, btnY + 22);
 
       let isActionTriggered = (isPinching && modelLoaded && predictions.length > 0);
       if (isActionTriggered) {
@@ -1075,7 +1087,7 @@ function drawEndScreen(pX, pY, pW, pH) {
       noStroke();
       fill(themeR, themeG, themeB);
       textSize(16);
-      text(allClear ? "領取大師稱號" : "回主選單", pX + pW / 2, btnY + 22);
+      text("回主選單", pX + pW / 2, btnY + 22);
       confirmTimer = Math.max(0, confirmTimer - 2);
     }
   }
@@ -1223,7 +1235,7 @@ class FallingItem {
     this.pX = pX; this.pY = pY; this.pW = pW; this.pH = pH;
     this.x = random(pX + 30, pX + pW - 30); // 隨機 X，邊界往內縮一點避免大物件卡牆
     this.y = pY - 40;                       // 從螢幕上方外面開始掉 (配合放大拉高起始點)
-    this.speed = random(2, 5);              // 隨機掉落速度
+    this.speed = random(4, 8);              // 加快隨機掉落速度，提升挑戰性
     this.size = 45;                         // 紀錄變大的尺寸
     // 50% 機率是起司，50% 是電擊
     this.type = random(1) > 0.5 ? "cheese" : "shock";
@@ -1409,7 +1421,7 @@ function runGameOne(pX, pY, pW, pH) {
   // B. 自動生成物件
   if (gameState === "playing") { // 確保動畫期間不會繼續掉積木
     gameTimer++;
-    if (gameTimer % 45 === 0) {
+    if (gameTimer % 25 === 0) { // 加快生成頻率 (原本為 45)
       items.push(new FallingItem(pX, pY, pW, pH));
     }
   }
@@ -1607,28 +1619,41 @@ class MemoryCard {
       fill(20, 30, 40); // 背面：深色
       rect(-this.w / 2, -this.h / 2, this.w, this.h, 5);
       
-      // --- 新增：牌背復古幾何裝飾 ---
+      // --- 新增：牌背復古幾何裝飾 (動態霓虹閃爍) ---
       push();
       noFill();
-      // 1. 霓虹藍色內框
-      stroke(50, 100, 200, 150); 
+      
+      // 利用 frameCount 與卡片座標產生交錯的閃爍頻率
+      let pulse1 = sin(frameCount * 0.1 + this.x * 0.05); 
+      let pulse2 = cos(frameCount * 0.15 + this.y * 0.05);
+
+      // 1. 霓虹水藍色內框
+      drawingContext.shadowBlur = 10 + pulse1 * 5;
+      drawingContext.shadowColor = "rgba(0, 200, 255, 0.8)";
+      stroke(0, 200, 255, 150 + pulse1 * 80); 
       strokeWeight(2);
       rect(-this.w * 0.4, -this.h * 0.4, this.w * 0.8, this.h * 0.8, 3);
       
-      // 2. 霓虹紅色圓形與對角線交叉
-      stroke(220, 50, 50, 100);
-      strokeWeight(1);
+      // 2. 霓虹粉紅色圓形與對角線交叉
+      drawingContext.shadowBlur = 10 + pulse2 * 5;
+      drawingContext.shadowColor = "rgba(255, 50, 150, 0.8)";
+      stroke(255, 50, 150, 150 + pulse2 * 80);
+      strokeWeight(1.5);
       ellipse(0, 0, this.w * 0.6, this.w * 0.6);
       line(-this.w * 0.4, -this.h * 0.4, this.w * 0.4, this.h * 0.4);
       line(this.w * 0.4, -this.h * 0.4, -this.w * 0.4, this.h * 0.4);
-      pop();
 
-      // 中心懸浮的發光問號
+      // 3. 中心懸浮的發光問號
+      drawingContext.shadowBlur = 15;
+      drawingContext.shadowColor = "rgba(150, 255, 200, 1)";
       noStroke();
-      fill(150, 255, 200);
+      fill(150, 255, 200, 200 + sin(frameCount * 0.2) * 55);
       textAlign(CENTER, CENTER);
-      textSize(24);
+      textSize(24 + sin(frameCount * 0.15) * 2); // 微微放大縮小呼吸
       text("?", 0, 0);
+
+      drawingContext.shadowBlur = 0; // 關閉發光避免影響其他繪圖
+      pop();
     }
     drawingContext.shadowBlur = 0; // 關閉發光效果避免影響效能
     drawingContext.shadowOffsetY = 0;
