@@ -78,16 +78,16 @@ let shakeTimer = 0;      // 震動計時器
 
 function preload() {
   // 預先載入 1.png 圖片作為背景
-  loadingBg = loadImage('1.png');
+  loadingBg = loadImage('./1.png');
   // 預先載入 2.png 圖片作為起始畫面背景
-  bootBg = loadImage('2.png');
+  bootBg = loadImage('./2.png');
   // 預先載入背景音樂
-  bgMusic = loadSound('music.mp3');
+  bgMusic = loadSound('./music.mp3');
   // 預先載入全破歡呼音效
-  cheerSound = loadSound('cheer.mp3');
+  cheerSound = loadSound('./cheer.mp3');
   // 預先載入選單與確認音效
-  beepSound = loadSound('beep.mp3');
-  confirmSound = loadSound('confirm.mp3');
+  beepSound = loadSound('./beep.mp3');
+  confirmSound = loadSound('./confirm.mp3');
 }
 
 function setup() {
