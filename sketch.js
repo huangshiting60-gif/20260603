@@ -124,8 +124,14 @@ function setup() {
   }
 
   // 初始化攝像頭
-  video = createCapture(VIDEO);
-  video.size(640, 480); // 建議固定辨識解析度以增進效能
+  let constraints = {
+    video: {
+      facingMode: "user" // 強制使用前置鏡頭 (自拍鏡頭)
+    },
+    audio: false
+  };
+  video = createCapture(constraints);
+  video.size(320, 240); // 降低解析度以大幅提升手機 AI 辨識效能 (不影響畫面與映射)
   video.hide(); // 隱藏原生網頁標籤，只畫在 Canvas 內
 
   // 初始化 Handpose 模型 (ml5 v1.0+ 最新標準寫法，不傳入 video)
@@ -787,10 +793,11 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
   text(theory, pX + 40, pY + pH * 0.50, pW - 80); // 移除高度限制，只給予寬度邊界自動換行，防止被裁切
   textAlign(CENTER, CENTER); // 恢復原本的置中對齊，以免影響後續的按鈕文字
 
-  // --- 優化：提供「返回選單」與「開始挑戰」兩個按鈕 ---
-  let btnW = 140;
-  let btnH = 45;
-  let spacing = 20;
+  // --- 優化：提供「返回選單」與「開始挑戰」兩個按鈕 (手機版自動放大) ---
+  let uiScale = width < 768 ? 1.3 : 1.0;
+  let btnW = 140 * uiScale;
+  let btnH = 45 * uiScale;
+  let spacing = 20 * uiScale;
   let btnX1 = pX + pW / 2 - btnW - spacing / 2; // 左邊按鈕 (返回)
   let btnX2 = pX + pW / 2 + spacing / 2;        // 右邊按鈕 (開始)
   let btnY = pY + pH * 0.78;
@@ -813,11 +820,11 @@ function drawIntroScreen(title, goal, control, theory, pX, pY, pW, pH) {
     if (isHovering) {
       fill(themeR, themeG, themeB, map(sin(frameCount * 0.1), -1, 1, 100, 200));
       rect(x, y, w, h, 5);
-      fill(0); textSize(16); text(label, x + w / 2, y + h / 2);
+              fill(0); textSize(16 * uiScale); text(label, x + w / 2, y + h / 2);
     } else {
       noFill(); stroke(themeR, themeG, themeB); strokeWeight(2);
       rect(x, y, w, h, 5);
-      noStroke(); fill(themeR, themeG, themeB); textSize(16); text(label, x + w / 2, y + h / 2);
+              noStroke(); fill(themeR, themeG, themeB); textSize(16 * uiScale); text(label, x + w / 2, y + h / 2);
     }
   };
 
@@ -1038,8 +1045,9 @@ function drawEndScreen(pX, pY, pW, pH) {
   // 全破時隱藏按鈕，讓畫面永遠停留在獲勝結算卡上 (滿足「不要回起始頁」的需求)
   let isFinalWin = (gameState === "win" && allClear);
   if (gameState === "lose" || (gameState === "win" && stampAnimTimer <= 0 && !isFinalWin)) {
-    let btnW = 160;
-    let btnH = 45;
+    let uiScale = width < 768 ? 1.3 : 1.0;
+    let btnW = 160 * uiScale;
+    let btnH = 45 * uiScale;
     let btnX = pX + (pW - btnW) / 2;
     let btnY = pY + pH * 0.75; // 下移避開集章卡
 
@@ -1062,8 +1070,8 @@ function drawEndScreen(pX, pY, pW, pH) {
       fill(themeR, themeG, themeB, map(sin(frameCount * 0.1), -1, 1, 100, 200));
       rect(btnX, btnY, btnW, btnH, 5);
       fill(0);
-      textSize(16);
-      text("回主選單", pX + pW / 2, btnY + 22);
+      textSize(16 * uiScale);
+      text("回主選單", pX + pW / 2, btnY + btnH / 2 + 1);
 
       let isActionTriggered = (isPinching && modelLoaded && predictions.length > 0);
       if (isActionTriggered) {
@@ -1086,8 +1094,8 @@ function drawEndScreen(pX, pY, pW, pH) {
       rect(btnX, btnY, btnW, btnH, 5);
       noStroke();
       fill(themeR, themeG, themeB);
-      textSize(16);
-      text("回主選單", pX + pW / 2, btnY + 22);
+      textSize(16 * uiScale);
+      text("回主選單", pX + pW / 2, btnY + btnH / 2 + 1);
       confirmTimer = Math.max(0, confirmTimer - 2);
     }
   }
@@ -1147,10 +1155,11 @@ function drawPauseScreen(pX, pY, pW, pH) {
   
   drawingContext.shadowBlur = 0; // 關閉發光效果，避免影響下方的按鈕繪製
 
-  // 調整為三個按鈕的佈局
-  let btnW = 130;
-  let btnH = 45;
-  let spacing = 15;
+  // 調整為三個按鈕的佈局 (手機版自動放大)
+  let uiScale = width < 768 ? 1.2 : 1.0; // 三個按鈕比較擠，放大倍率稍微縮小一點
+  let btnW = 130 * uiScale;
+  let btnH = 45 * uiScale;
+  let spacing = 15 * uiScale;
   let btnX2 = pX + pW / 2 - btnW / 2;        // 中間按鈕 (重新開始)
   let btnX1 = btnX2 - btnW - spacing;        // 左邊按鈕 (繼續遊戲)
   let btnX3 = btnX2 + btnW + spacing;        // 右邊按鈕 (回主選單)
@@ -1176,11 +1185,11 @@ function drawPauseScreen(pX, pY, pW, pH) {
     if (isHovering) {
       fill(themeR, themeG, themeB, map(sin(frameCount * 0.1), -1, 1, 100, 200));
       rect(x, y, w, h, 5);
-      fill(0); textSize(16); text(label, x + w / 2, y + h / 2);
+      fill(0); textSize(15 * uiScale); text(label, x + w / 2, y + h / 2);
     } else {
       noFill(); stroke(themeR, themeG, themeB); strokeWeight(2);
       rect(x, y, w, h, 5);
-      noStroke(); fill(themeR, themeG, themeB); textSize(16); text(label, x + w / 2, y + h / 2);
+      noStroke(); fill(themeR, themeG, themeB); textSize(15 * uiScale); text(label, x + w / 2, y + h / 2);
     }
   };
   drawBtn(btnX1, btnY, btnW, btnH, "繼續遊戲", hover1);
@@ -2408,9 +2417,10 @@ function drawBootScreen(pX, pY, pW, pH) {
   text("歡迎來到復古教育機台！\n\n在這裡，我們將透過三個經典的互動小遊戲\n帶您親身體驗 行為主義、認知主義 與 建構主義。", pX + pW / 2, pY + pH * 0.55);
   pop();
 
-  // --- UI 底層：進入按鈕與說明 (位移最小，並同步修改碰撞判定區域) ---
-  let btnW = 240;
-  let btnH = 60;
+  // --- UI 底層：進入按鈕與說明 (位移最小，並同步修改碰撞判定區域) 手機自適應 ---
+  let uiScale = width < 768 ? 1.3 : 1.0;
+  let btnW = 240 * uiScale;
+  let btnH = 60 * uiScale;
   let btnX = pX + (pW - btnW) / 2 + offsetX * 0.5;
   let btnY = pY + pH * 0.75 + offsetY * 0.5;
   let isHovering = mouseX_pos > btnX && mouseX_pos < btnX + btnW && mouseY_pos > btnY && mouseY_pos < btnY + btnH;
@@ -2431,8 +2441,8 @@ function drawBootScreen(pX, pY, pW, pH) {
     fill(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
     rect(btnX, btnY, btnW, btnH, 10);
     fill(0);
-    textSize(24);
-    text("進入機台", btnX + btnW / 2, btnY + 30);
+    textSize(24 * uiScale);
+    text("進入機台", btnX + btnW / 2, btnY + btnH / 2 + 2);
 
     let isActionTriggered = (isPinching && predictions.length > 0);
     if (isActionTriggered) {
@@ -2455,8 +2465,8 @@ function drawBootScreen(pX, pY, pW, pH) {
     rect(btnX, btnY, btnW, btnH, 10);
     noStroke();
     fill(0, 200, 255);
-    textSize(24);
-    text("進入機台", btnX + btnW / 2, btnY + 30);
+    textSize(24 * uiScale);
+    text("進入機台", btnX + btnW / 2, btnY + btnH / 2 + 2);
     confirmTimer = Math.max(0, confirmTimer - 2);
   }
   pop();
@@ -2576,6 +2586,9 @@ function drawMenu(pX, pY, pW, pH) {
 }
 
 function drawControls(screenX, screenW, screenY, screenH, consoleW) {
+  // --- 手機版 UI 自適應放大 ---
+  let uiScale = width < 850 ? 1.35 : 1.0; 
+
   let controlAreaX = screenX + screenW;
   let consoleX = (width - (width * 0.85)) / 2;
   let controlAreaW = consoleW - screenW - (consoleW * 0.1);
@@ -2583,35 +2596,39 @@ function drawControls(screenX, screenW, screenY, screenH, consoleW) {
   let dpadY = screenY + (screenH * 0.3);
 
   // --- 新增：十字方向鍵 (D-Pad) 按壓狀態判定 ---
-  let dUp_hand = dist(mouseX_pos, mouseY_pos, dpadX, dpadY - 30);
-  let isPressedUp = (dUp_hand < 20 && isPinching) || keyIsDown(UP_ARROW);
+  let dUp_hand = dist(mouseX_pos, mouseY_pos, dpadX, dpadY - 30 * uiScale);
+  let isPressedUp = (dUp_hand < 25 * uiScale && isPinching) || keyIsDown(UP_ARROW);
 
-  let dDown_hand = dist(mouseX_pos, mouseY_pos, dpadX, dpadY + 30);
-  let isPressedDown = (dDown_hand < 20 && isPinching) || keyIsDown(DOWN_ARROW);
+  let dDown_hand = dist(mouseX_pos, mouseY_pos, dpadX, dpadY + 30 * uiScale);
+  let isPressedDown = (dDown_hand < 25 * uiScale && isPinching) || keyIsDown(DOWN_ARROW);
 
-  let dLeft_hand = dist(mouseX_pos, mouseY_pos, dpadX - 30, dpadY);
-  let isPressedLeft = (dLeft_hand < 20 && isPinching) || keyIsDown(LEFT_ARROW);
+  let dLeft_hand = dist(mouseX_pos, mouseY_pos, dpadX - 30 * uiScale, dpadY);
+  let isPressedLeft = (dLeft_hand < 25 * uiScale && isPinching) || keyIsDown(LEFT_ARROW);
 
-  let dRight_hand = dist(mouseX_pos, mouseY_pos, dpadX + 30, dpadY);
-  let isPressedRight = (dRight_hand < 20 && isPinching) || keyIsDown(RIGHT_ARROW);
+  let dRight_hand = dist(mouseX_pos, mouseY_pos, dpadX + 30 * uiScale, dpadY);
+  let isPressedRight = (dRight_hand < 25 * uiScale && isPinching) || keyIsDown(RIGHT_ARROW);
 
   let anyDPadPressed = isPressedUp || isPressedDown || isPressedLeft || isPressedRight;
   let offsetDPad = anyDPadPressed ? 3 : 0;
 
+  push();
+  translate(dpadX, dpadY);
+  scale(uiScale);
   noStroke();
+  
   // 1. 十字鍵底部深色陰影 (固定不動，增加立體感)
   fill(15, 15, 20); 
-  rect(dpadX - 15, dpadY - 45 + 3, 30, 90, 5);
-  rect(dpadX - 45, dpadY - 15 + 3, 90, 30, 5);
+  rect(-15, -45 + 3, 30, 90, 5);
+  rect(-45, -15 + 3, 90, 30, 5);
 
   // 2. 十字鍵主體 (根據按壓狀態位移與變暗)
   fill(anyDPadPressed ? color(15, 15, 20) : color(25, 25, 30));
-  rect(dpadX - 15, dpadY - 45 + offsetDPad, 30, 90, 5);
-  rect(dpadX - 45, dpadY - 15 + offsetDPad, 90, 30, 5);
+  rect(-15, -45 + offsetDPad, 30, 90, 5);
+  rect(-45, -15 + offsetDPad, 90, 30, 5);
 
   // 3. 十字鍵中央凹槽
   fill(anyDPadPressed ? color(30, 30, 35) : color(40, 40, 45));
-  ellipse(dpadX, dpadY + offsetDPad, 15, 15);
+  ellipse(0, offsetDPad, 15, 15);
 
   // --- 新增：十字鍵防滑條紋 (Anti-slip Grip) ---
   push();
@@ -2631,27 +2648,28 @@ function drawControls(screenX, screenW, screenY, screenH, consoleW) {
   };
 
   // 繪製各方向的 3 條防滑紋
-  drawHStripe(dpadX, dpadY - 36); drawHStripe(dpadX, dpadY - 31); drawHStripe(dpadX, dpadY - 26); // 上
-  drawHStripe(dpadX, dpadY + 26); drawHStripe(dpadX, dpadY + 31); drawHStripe(dpadX, dpadY + 36); // 下
-  drawVStripe(dpadX - 36, dpadY); drawVStripe(dpadX - 31, dpadY); drawVStripe(dpadX - 26, dpadY); // 左
-  drawVStripe(dpadX + 26, dpadY); drawVStripe(dpadX + 31, dpadY); drawVStripe(dpadX + 36, dpadY); // 右
+  drawHStripe(0, -36); drawHStripe(0, -31); drawHStripe(0, -26); // 上
+  drawHStripe(0, 26); drawHStripe(0, 31); drawHStripe(0, 36); // 下
+  drawVStripe(-36, 0); drawVStripe(-31, 0); drawVStripe(-26, 0); // 左
+  drawVStripe(36, 0); drawVStripe(31, 0); drawVStripe(36, 0); // 右
   pop();
 
   // --- 新增：方向鍵刻痕箭頭 (Directional Arrows) 標示更清楚 ---
   push();
   fill(anyDPadPressed ? color(10, 10, 15) : color(20, 20, 25)); // 內凹深色刻痕
   noStroke();
-  triangle(dpadX, dpadY - 22 + offsetDPad, dpadX - 4, dpadY - 14 + offsetDPad, dpadX + 4, dpadY - 14 + offsetDPad); // 上
-  triangle(dpadX, dpadY + 22 + offsetDPad, dpadX - 4, dpadY + 14 + offsetDPad, dpadX + 4, dpadY + 14 + offsetDPad); // 下
-  triangle(dpadX - 22, dpadY + offsetDPad, dpadX - 14, dpadY - 4 + offsetDPad, dpadX - 14, dpadY + 4 + offsetDPad); // 左
-  triangle(dpadX + 22, dpadY + offsetDPad, dpadX + 14, dpadY - 4 + offsetDPad, dpadX + 14, dpadY + 4 + offsetDPad); // 右
+  triangle(0, -22 + offsetDPad, -4, -14 + offsetDPad, 4, -14 + offsetDPad); // 上
+  triangle(0, 22 + offsetDPad, -4, 14 + offsetDPad, 4, 14 + offsetDPad); // 下
+  triangle(-22, offsetDPad, -14, -4 + offsetDPad, -14, 4 + offsetDPad); // 左
+  triangle(22, offsetDPad, 14, -4 + offsetDPad, 14, 4 + offsetDPad); // 右
   pop();
 
   // 4. 被按下的方向給予微光提示 (增加按壓的視覺回饋)
-  if (isPressedUp) { fill(255, 255, 255, 30); rect(dpadX - 15, dpadY - 45 + offsetDPad, 30, 30, 5, 5, 0, 0); }
-  if (isPressedDown) { fill(255, 255, 255, 30); rect(dpadX - 15, dpadY + 15 + offsetDPad, 30, 30, 0, 0, 5, 5); }
-  if (isPressedLeft) { fill(255, 255, 255, 30); rect(dpadX - 45, dpadY - 15 + offsetDPad, 30, 30, 5, 0, 0, 5); }
-  if (isPressedRight) { fill(255, 255, 255, 30); rect(dpadX + 15, dpadY - 15 + offsetDPad, 30, 30, 0, 5, 5, 0); }
+  if (isPressedUp) { fill(255, 255, 255, 30); rect(-15, -45 + offsetDPad, 30, 30, 5, 5, 0, 0); }
+  if (isPressedDown) { fill(255, 255, 255, 30); rect(-15, 15 + offsetDPad, 30, 30, 0, 0, 5, 5); }
+  if (isPressedLeft) { fill(255, 255, 255, 30); rect(-45, -15 + offsetDPad, 30, 30, 5, 0, 0, 5); }
+  if (isPressedRight) { fill(255, 255, 255, 30); rect(15, -15 + offsetDPad, 30, 30, 0, 5, 5, 0); }
+  pop();
 
   // 復古紅色 A / B 按鈕
   let btnY = screenY + (screenH * 0.65);
@@ -2660,42 +2678,51 @@ function drawControls(screenX, screenW, screenY, screenH, consoleW) {
   
   // --- 新增：按鈕按壓狀態判定 (支援手勢捏合、滑鼠點擊、鍵盤 A/B 鍵) ---
   let dA_hand = dist(mouseX_pos, mouseY_pos, btnX_A, btnY);
-  let isPressedA = (dA_hand < 20 && isPinching) || keyIsDown(65); // 65: 鍵盤 A 鍵
+  let isPressedA = (dA_hand < 25 * uiScale && isPinching) || keyIsDown(65); // 65: 鍵盤 A 鍵
 
-  let dB_hand = dist(mouseX_pos, mouseY_pos, btnX_B, btnY + 10);
-  let isPressedB = (dB_hand < 20 && isPinching) || keyIsDown(66); // 66: 鍵盤 B 鍵
+  let dB_hand = dist(mouseX_pos, mouseY_pos, btnX_B, btnY + 10 * uiScale);
+  let isPressedB = (dB_hand < 25 * uiScale && isPinching) || keyIsDown(66); // 66: 鍵盤 B 鍵
 
   // 設定按下時的位移量
   let offsetA = isPressedA ? 3 : 0;
   let offsetB = isPressedB ? 3 : 0;
 
+  push();
+  translate(btnX_B, btnY + 10 * uiScale);
+  scale(uiScale);
   fill(20, 20, 25); 
-  ellipse(btnX_B + 2, btnY + 4 + 10, 40, 40);
-  ellipse(btnX_A + 2, btnY + 4, 40, 40);
-  
-  // 根據按壓狀態位移按鈕主體，並稍微變暗
+  ellipse(2, 4, 40, 40);
   fill(isPressedB ? color(150, 30, 30) : color(200, 40, 40)); 
-  ellipse(btnX_B + offsetB, btnY + 10 + offsetB, 40, 40);
-  
-  fill(isPressedA ? color(150, 30, 30) : color(200, 40, 40)); 
-  ellipse(btnX_A + offsetA, btnY + offsetA, 40, 40);
-  
+  ellipse(offsetB, offsetB, 40, 40);
   fill(180, 185, 195);
   textSize(14);
   textAlign(CENTER, CENTER);
-  text("B", btnX_B, btnY + 35);
-  text("A", btnX_A, btnY + 25);
+  text("B", 0, 25);
+  pop();
+  
+  push();
+  translate(btnX_A, btnY);
+  scale(uiScale);
+  fill(20, 20, 25); 
+  ellipse(2, 4, 40, 40);
+  fill(isPressedA ? color(150, 30, 30) : color(200, 40, 40)); 
+  ellipse(offsetA, offsetA, 40, 40);
+  fill(180, 185, 195);
+  textSize(14);
+  textAlign(CENTER, CENTER);
+  text("A", 0, 25);
+  pop();
 
   // --- 新增：喇叭孔 (Speaker Grills) ---
   push();
+  translate(dpadX - 25 * uiScale, btnY + 90 * uiScale);
+  scale(uiScale);
   noStroke();
-  let speakerX = dpadX - 25;
-  let speakerY = btnY + 90;
   for (let i = 0; i < 6; i++) {
     for (let j = 0; j < 4; j++) {
       let offsetX = (j % 2 === 0) ? 0 : 8; // 交錯排列的網格孔設計
-      let hX = speakerX + i * 16 + offsetX;
-      let hY = speakerY + j * 12;
+      let hX = i * 16 + offsetX;
+      let hY = j * 12;
       
       // 1. 喇叭孔下緣高光 (營造內凹厚度感)
       fill(100, 105, 115);
@@ -2785,6 +2812,14 @@ function keyReleased() {
 
 function mousePressed() {
   // 現代瀏覽器限制自動播放聲音，需透過點擊畫面解鎖音訊
+  userStartAudio();
+  if (bgMusic && !bgMusic.isPlaying()) {
+    bgMusic.loop();
+  }
+}
+
+function touchStarted() {
+  // 支援手機觸控解鎖音訊
   userStartAudio();
   if (bgMusic && !bgMusic.isPlaying()) {
     bgMusic.loop();

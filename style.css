@@ -1,8 +1,54 @@
 html, body {
   margin: 0;
   padding: 0;
+  overflow: hidden;
+  touch-action: none; /* 禁止手機瀏覽器預設的雙擊放大、下拉更新或頁面滑動 */
 }
 
 canvas {
   display: block;
+}
+
+/* --- 螢幕翻轉提示 (行動裝置直立時顯示) --- */
+#orientation-warning {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(10, 15, 30, 0.95);
+  color: #00c8ff;
+  z-index: 9999;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  backdrop-filter: blur(10px);
+}
+
+#orientation-warning .phone-icon {
+  font-size: 60px;
+  margin-bottom: 20px;
+  animation: rotatePhone 1.5s infinite ease-in-out alternate;
+}
+
+#orientation-warning p {
+  font-size: 24px;
+  font-weight: bold;
+  margin: 0;
+  line-height: 1.5;
+}
+
+@keyframes rotatePhone {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(-90deg); }
+}
+
+/* 偵測直立 (Portrait) 且為行動裝置時顯示 */
+@media screen and (orientation: portrait) and (max-width: 768px) {
+  #orientation-warning {
+    display: flex;
+  }
 }

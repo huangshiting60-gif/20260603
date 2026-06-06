@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>第四關：3D 粒子視覺系統</title>
+  <link rel="icon" href="data:," />
   <style>
     body { margin: 0; overflow: hidden; background-color: #050505; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     #webgl-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
@@ -25,6 +26,51 @@
     /* 新增：手勢虛擬游標 */
     #hand-cursor { position: absolute; width: 24px; height: 24px; border-radius: 50%; background: rgba(0, 200, 255, 0.4); border: 2px solid #0cf; pointer-events: none; z-index: 100; transform: translate(-50%, -50%); transition: background 0.2s, border-color 0.2s, transform 0.1s; box-shadow: 0 0 15px rgba(0, 200, 255, 0.5); }
     .pinching { background: rgba(255, 50, 50, 0.8) !important; border-color: #ff4444 !important; transform: translate(-50%, -50%) scale(0.6) !important; box-shadow: 0 0 20px rgba(255, 50, 50, 0.8) !important; }
+
+    /* --- 手機版 UI 自適應放大 --- */
+    @media screen and (max-width: 850px) and (orientation: landscape) {
+      .panel { transform: scale(1.15); }
+      #bottom-left { transform-origin: bottom left; }
+      #btn-exit { transform-origin: bottom right; }
+    }
+
+    /* --- 螢幕翻轉提示 (行動裝置直立時顯示) --- */
+    #orientation-warning {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: rgba(10, 15, 30, 0.95);
+      color: #00c8ff;
+      z-index: 9999;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      backdrop-filter: blur(10px);
+    }
+    #orientation-warning .phone-icon {
+      font-size: 60px;
+      margin-bottom: 20px;
+      animation: rotatePhone 1.5s infinite ease-in-out alternate;
+    }
+    #orientation-warning p {
+      font-size: 24px;
+      font-weight: bold;
+      margin: 0;
+      line-height: 1.5;
+    }
+    @keyframes rotatePhone {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(-90deg); }
+    }
+    @media screen and (orientation: portrait) and (max-width: 768px) {
+      #orientation-warning {
+        display: flex;
+      }
+    }
   </style>
   
   <!-- MediaPipe -->
@@ -32,6 +78,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
+
+  <!-- 手機直向提示 -->
+  <div id="orientation-warning">
+    <div class="phone-icon">📱</div>
+    <p>請將手機轉為橫向<br>以獲得最佳遊玩體驗</p>
+  </div>
 
   <div id="webgl-container"></div>
   
@@ -126,8 +178,8 @@
       document.getElementById('audio-hint').innerText = "🔊 點擊畫面任一處播放音樂";
     });
 
-    // 瀏覽器安全性限制：必須透過使用者互動 (點擊畫面) 才能播放音訊
-    window.addEventListener('click', () => {
+    // 瀏覽器安全性限制：必須透過使用者互動 (點擊或觸控畫面) 才能播放音訊
+    const unlockAudio = () => {
       initAudioVisualizer();
       if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 
@@ -138,7 +190,10 @@
         bgMusic.pause();
         document.getElementById('audio-hint').innerText = "🔊 已暫停 (點擊畫面可播放)";
       }
-    });
+    };
+
+    window.addEventListener('click', unlockAudio);
+    window.addEventListener('touchstart', unlockAudio, { passive: false });
 
     // --- 初始化 Three.js ---
     function initThreeJS() {
@@ -442,7 +497,7 @@
     
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
+      modelComplexity: 0, // 將模型複雜度降為 0，大幅減輕手機負擔並提升幀率(FPS)
       minDetectionConfidence: 0.6,
       minTrackingConfidence: 0.6
     });
