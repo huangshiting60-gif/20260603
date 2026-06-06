@@ -168,15 +168,15 @@ function updateHandData() {
 
     // 3. 判定五指張開 (Open Hand)：檢查食指、中指、無名指、小指尖端是否都遠離手腕
     let wrist = hand.keypoints[0];
-    // 徹底優化：比較「指尖」與「指節」離手腕的相對距離，避免受手部離鏡頭遠近影響
+    // 徹底優化：比較「指尖」與「指節」離手腕的相對距離，並加上門檻以降低誤觸率
     let openCount = 0;
     [8, 12, 16, 20].forEach(tipIdx => {
       let jointIdx = tipIdx - 2;
       let tipDist = dist(hand.keypoints[tipIdx].x, hand.keypoints[tipIdx].y, wrist.x, wrist.y);
       let jointDist = dist(hand.keypoints[jointIdx].x, hand.keypoints[jointIdx].y, wrist.x, wrist.y);
-      if (tipDist > jointDist) openCount++;
+      if (tipDist > jointDist * 1.2) openCount++; // 提高伸直判定標準：指尖必須明顯比指節更遠
     });
-    isHandOpen = openCount >= 3; // 只要有三根手指伸直就判定為張開
+    isHandOpen = openCount >= 4; // 必須 4 根手指都明確張開才判定為張開
 
     // --- 新增：判定比讚 (Thumbs Up) ---
     // 條件：四指皆彎曲 (openCount === 0) 且大拇指尖端 (4) 明顯高於食指根部 (5)
@@ -411,15 +411,15 @@ function draw() {
   let playAreaH = screenH - 70;
   rect(playAreaX, playAreaY, playAreaW, playAreaH);
 
-  // --- 修改：復古雜訊雪花畫面特效 (Static Noise) ---
+  // --- 修改：復古雜訊雪花畫面特效 (大幅降低迴圈次數優化效能) ---
   push();
   noStroke();
-  for (let i = 0; i < 300; i++) {
-    let noiseX = random(playAreaX, playAreaX + playAreaW - 3);
-    let noiseY = random(playAreaY, playAreaY + playAreaH - 3);
-    let noiseSize = random(2, 4); // 雪花顆粒大小
+  for (let i = 0; i < 80; i++) {
+    let noiseX = random(playAreaX, playAreaX + playAreaW - 4);
+    let noiseY = random(playAreaY, playAreaY + playAreaH - 4);
+    let noiseSize = random(3, 6); // 將雪花稍微放大，填補數量減少的空缺
     // 隨機產生半透明的黑色或白色雪花
-    fill(random(1) > 0.5 ? 255 : 0, random(10, 40)); 
+    fill(random(1) > 0.5 ? 255 : 0, random(15, 30)); 
     rect(noiseX, noiseY, noiseSize, noiseSize);
   }
   pop();
@@ -1590,17 +1590,7 @@ class MemoryCard {
     if (this.matchAnimTimer > 0) {
       // 彈跳效果：使用 sin 函數產生拋物線跳動感
       offsetY = -sin(map(this.matchAnimTimer, 40, 0, 0, PI)) * 40;
-      // 發光效果：利用原生 Canvas 陰影 API
-      drawingContext.shadowBlur = 30;
-      drawingContext.shadowColor = "rgba(0, 200, 255, 1)";
-      drawingContext.shadowOffsetY = 0;
       this.matchAnimTimer--; // 更新計時器
-    } else {
-      // --- 優化：翻轉時的動態 3D 陰影 ---
-      // 隨著卡片翻轉，陰影會變得更模糊且往下偏移，產生懸浮感
-      drawingContext.shadowBlur = 10 + flipProgress * 20;
-      drawingContext.shadowColor = "rgba(0, 0, 0, 0.5)";
-      drawingContext.shadowOffsetY = 5 + flipProgress * 12;
     }
 
     // 將座標系統移到卡片中心點，方便進行中心縮放
@@ -1612,6 +1602,22 @@ class MemoryCard {
     // 當卡片轉向側面時，同時稍微放大，產生往鏡頭靠近的 3D 錯覺
     let popScale = 1.0 + flipProgress * 0.15; // 最高放大 15%
     scale(abs(this.scaleX) * popScale, popScale); 
+
+    // --- 效能優化：徹底移除 shadowBlur，改用疊加透明矩形繪製立體陰影 ---
+    noStroke();
+    if (this.matchAnimTimer > 0) {
+      // 配對成功時的發光效果
+      for (let i = 3; i > 0; i--) {
+        fill(0, 200, 255, 30);
+        rect(-this.w / 2 - i * 4, -this.h / 2 - i * 4, this.w + i * 8, this.h + i * 8, 5 + i * 2);
+      }
+    } else {
+      // 翻轉時的立體陰影
+      let shadowOffset = 5 + flipProgress * 12;
+      let shadowSpread = 10 + flipProgress * 10;
+      fill(0, 0, 0, 40);
+      rect(-this.w / 2 - shadowSpread * 0.5, -this.h / 2 + shadowOffset - shadowSpread * 0.5, this.w + shadowSpread, this.h + shadowSpread, 10);
+    }
 
     stroke(0, 200, 255);
     strokeWeight(2);
@@ -1636,41 +1642,36 @@ class MemoryCard {
       let pulse1 = sin(frameCount * 0.1 + this.x * 0.05); 
       let pulse2 = cos(frameCount * 0.15 + this.y * 0.05);
 
+      // --- 效能優化：移除牌背內裝飾的高耗能陰影特效，改用透明度變化 ---
       // 1. 霓虹水藍色內框
-      drawingContext.shadowBlur = 10 + pulse1 * 5;
-      drawingContext.shadowColor = "rgba(0, 200, 255, 0.8)";
       stroke(0, 200, 255, 150 + pulse1 * 80); 
       strokeWeight(2);
       rect(-this.w * 0.4, -this.h * 0.4, this.w * 0.8, this.h * 0.8, 3);
       
       // 2. 霓虹粉紅色圓形與對角線交叉
-      drawingContext.shadowBlur = 10 + pulse2 * 5;
-      drawingContext.shadowColor = "rgba(255, 50, 150, 0.8)";
       stroke(255, 50, 150, 150 + pulse2 * 80);
       strokeWeight(1.5);
       ellipse(0, 0, this.w * 0.6, this.w * 0.6);
       line(-this.w * 0.4, -this.h * 0.4, this.w * 0.4, this.h * 0.4);
       line(this.w * 0.4, -this.h * 0.4, -this.w * 0.4, this.h * 0.4);
 
-      // 3. 中心懸浮的發光問號
-      drawingContext.shadowBlur = 15;
-      drawingContext.shadowColor = "rgba(150, 255, 200, 1)";
+      // 3. 中心懸浮的問號
       noStroke();
       fill(150, 255, 200, 200 + sin(frameCount * 0.2) * 55);
       textAlign(CENTER, CENTER);
       textSize(24 + sin(frameCount * 0.15) * 2); // 微微放大縮小呼吸
       text("?", 0, 0);
 
-      drawingContext.shadowBlur = 0; // 關閉發光避免影響其他繪圖
       pop();
     }
-    drawingContext.shadowBlur = 0; // 關閉發光效果避免影響效能
-    drawingContext.shadowOffsetY = 0;
     pop();
   }
 
   update(px, py) {
-    if (dist(px, py, this.x + this.w/2, this.y + this.h/2) < this.w/2) {
+    // 將圓形判定改為矩形判定 (Bounding Box)，並加上容錯範圍，讓手指更好觸發
+    let margin = 15;
+    if (px > this.x - margin && px < this.x + this.w + margin && 
+        py > this.y - margin && py < this.y + this.h + margin) {
       // 優化：改為「觸發式」翻牌 (Pinch Trigger)
       // 只有在這一影格剛捏合，且上一影格沒捏合時才觸發
       let actionTrigger = (isPinching && !isPinchingPrev);
@@ -1689,7 +1690,7 @@ function runGameTwo(pX, pY, pW, pH) {
     let theoryText = "理論背景：訊息處理論。\n學習涉及訊息的編碼、儲存與檢索。\n配對相同卡片的過程模擬了大腦如何辨識特徵，\n並將短期記憶中的資訊與長期記憶中的既有架構進行聯結。";
     drawIntroScreen("認知主義", 
                     "配對所有卡片以完成資訊編碼 (翻錯 3 次失敗)。", 
-                    "捏合手勢進行翻牌。", 
+                    "保持捏合手勢並「滑過」卡片即可翻開。", 
                     theoryText,
                     pX, pY, pW, pH);
     return;
@@ -1807,7 +1808,7 @@ function runGameTwo(pX, pY, pW, pH) {
   fill(0, 200, 255);
   textSize(14);
   textAlign(CENTER, TOP);
-  text("認知主義：完成所有配對", pX + pW/2, pY + 10);
+  text("認知主義：完成所有配對 (保持捏合手勢並滑過卡片)", pX + pW/2, pY + 10);
 
   // 顯示計時器
   textAlign(RIGHT, TOP);
@@ -2206,6 +2207,29 @@ function runGameThree(pX, pY, pW, pH) {
         }
       } else {
         // 被抓取中
+        // --- 新增：明確標示積木的降落目標區 (Drop Zone) ---
+        let supportX = stackedBlocks.length > 0 ? stackedBlocks[stackedBlocks.length - 1].x : (pX + pW * 0.2);
+        let supportW = stackedBlocks.length > 0 ? stackedBlocks[stackedBlocks.length - 1].w : (pW * 0.6);
+        let targetY = (pY + pH - 20) - (stackedBlocks.length + 1) * heldBlock.h;
+
+        push();
+        // 繪製科技感發光虛線框
+        stroke(0, 255, 100, 150 + sin(frameCount * 0.2) * 100); 
+        strokeWeight(2);
+        drawingContext.setLineDash([8, 6]); 
+        fill(0, 255, 100, 30); 
+        rect(supportX, targetY, supportW, heldBlock.h, 5);
+        
+        // 繪製明確的文字箭頭指引
+        noStroke();
+        fill(0, 255, 100, 200 + sin(frameCount * 0.2) * 55);
+        textSize(16);
+        textStyle(BOLD);
+        textAlign(CENTER, BOTTOM);
+        text("▼ 放置於此處 ▼", supportX + supportW / 2, targetY - 8);
+        drawingContext.setLineDash([]); // 重置虛線避免影響其他繪圖
+        pop();
+
         heldBlock.x = mouseX_pos - 50; // 配合放大調整抓取點
         heldBlock.y = mouseY_pos - 20;
         heldBlock.display();
@@ -2233,6 +2257,7 @@ function runGameThree(pX, pY, pW, pH) {
   // --- 新增：金色光柱過關特效 ---
   if (gameState === "win_anim") {
     push();
+    let isMobile = width < 768;
     let maxBeamH = pH;
     // 動畫：高度隨時間從 0 成長到 maxBeamH (約 0.75 秒升到頂)
     let currentBeamH = map(winAnimTimer, 90, 45, 0, maxBeamH);
@@ -2242,16 +2267,25 @@ function runGameThree(pX, pY, pW, pH) {
     let beamW = pW * 0.6;
     let beamY = (pY + pH - 20) - currentBeamH; // 由下往上畫
     
-    drawingContext.shadowBlur = 30;
-    drawingContext.shadowColor = "rgba(255, 215, 0, 1)";
-    
     // 外層金色光芒 (帶有脈衝閃爍感)
-    fill(255, 215, 0, 150 + sin(frameCount * 0.2) * 50); 
+    let beamAlpha = 150 + sin(frameCount * 0.2) * 50;
     noStroke();
+    if (!isMobile) {
+      // 效能優化寫法：疊加金光取代 shadowBlur
+      for (let i = 3; i > 0; i--) {
+        fill(255, 215, 0, beamAlpha * 0.15);
+        let spread = i * 8;
+        rect(beamX - spread, beamY, beamW + spread * 2, currentBeamH, 5 + spread);
+      }
+    }
+    fill(255, 215, 0, beamAlpha); 
     rect(beamX, beamY, beamW, currentBeamH, 5); 
     
     // 內層高光白柱
-    drawingContext.shadowBlur = 10;
+    if (!isMobile) {
+      fill(255, 255, 220, 40);
+      rect(beamX + beamW * 0.1, beamY, beamW * 0.8, currentBeamH, 5 + 4);
+    }
     fill(255, 255, 220, 200);
     rect(beamX + beamW * 0.2, beamY, beamW * 0.6, currentBeamH, 5);
     
@@ -2262,7 +2296,6 @@ function runGameThree(pX, pY, pW, pH) {
       let particleY = random(beamY, pY + pH - 20); // 確保粒子只在光柱範圍內
       ellipse(particleX, particleY, random(3, 8));
     }
-    drawingContext.shadowBlur = 0; // 關閉發光效果避免影響效能
     pop();
   }
 
@@ -2740,7 +2773,8 @@ function drawControls(screenX, screenW, screenY, screenH, consoleW) {
 function keyPressed() {
   // 鍵盤按下時也可嘗試解鎖並播放音訊
   userStartAudio();
-  if (bgMusic && !bgMusic.isPlaying()) {
+  let isAllClear = achievements[0] && achievements[1] && achievements[2] && achievements[3];
+  if (bgMusic && !bgMusic.isPlaying() && !isAllClear) {
     bgMusic.loop();
   }
 
@@ -2813,7 +2847,8 @@ function keyReleased() {
 function mousePressed() {
   // 現代瀏覽器限制自動播放聲音，需透過點擊畫面解鎖音訊
   userStartAudio();
-  if (bgMusic && !bgMusic.isPlaying()) {
+  let isAllClear = achievements[0] && achievements[1] && achievements[2] && achievements[3];
+  if (bgMusic && !bgMusic.isPlaying() && !isAllClear) {
     bgMusic.loop();
   }
 }
@@ -2821,7 +2856,8 @@ function mousePressed() {
 function touchStarted() {
   // 支援手機觸控解鎖音訊
   userStartAudio();
-  if (bgMusic && !bgMusic.isPlaying()) {
+  let isAllClear = achievements[0] && achievements[1] && achievements[2] && achievements[3];
+  if (bgMusic && !bgMusic.isPlaying() && !isAllClear) {
     bgMusic.loop();
   }
 }
