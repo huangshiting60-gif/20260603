@@ -3,6 +3,8 @@ let bgMusic;            // 背景音樂變數
 let cheerSound;         // 全破歡呼音效
 let beepSound;          // 游標懸停/切換選項滴答音效
 let confirmSound;       // 按下/確認選項音效
+let cheeseSound;        // 吃到起司音效
+let failSound;          // 觸電/失敗音效
 let prevMenuSelection = 0;  // 追蹤主選單切換，避免重複播放
 let globalHoverState = "";  // 追蹤各畫面的按鈕懸停狀態
 let hasCheered = false; // 紀錄是否已經播放過歡呼音效
@@ -88,6 +90,10 @@ function preload() {
   // 預先載入選單與確認音效
   beepSound = loadSound('./beep.mp3');
   confirmSound = loadSound('./confirm.mp3');
+  // 預先載入吃到起司的音效
+  cheeseSound = loadSound('./coin-257878.mp3');
+  // 預先載入觸電的音效
+  failSound = loadSound('./fail.mp3');
 }
 
 function setup() {
@@ -101,6 +107,8 @@ function setup() {
   // 調整 UI 音效音量 (將懸停滴答聲調小，避免太吵)
   if (beepSound) beepSound.setVolume(0.15); 
   if (confirmSound) confirmSound.setVolume(0.4);
+  if (cheeseSound) cheeseSound.setVolume(0.5); // 設定起司音效的音量
+  if (failSound) failSound.setVolume(0.5);     // 設定觸電音效的音量
 
   // 嘗試從 sessionStorage 讀取進度 (為了從第四關返回時保留紀錄)
   let savedAchievements = sessionStorage.getItem('edu_achievements');
@@ -1447,6 +1455,7 @@ function runGameOne(pX, pY, pW, pH) {
       let d = dist(playerX, playerY, items[i].x, items[i].y + 15); // 將判定中心下移到物件中心
       if (d < 45) {
         if (items[i].type === "cheese") {
+          if (cheeseSound && cheeseSound.isLoaded()) cheeseSound.play(); // 播放吃到起司音效
           score += 10; 
           if (score >= 100 && gameState === "playing") {
             gameState = "win"; // 滿百分勝利
@@ -1463,6 +1472,7 @@ function runGameOne(pX, pY, pW, pH) {
           // 飄出 +10 特效
           floatingTexts.push({ x: items[i].x, y: items[i].y, text: "+10", alpha: 255, c: color(255, 200, 0) });
         } else {
+          if (failSound && failSound.isLoaded()) failSound.play(); // 播放觸電音效
           score -= 20; // 懲罰：削弱行為
           if (score <= -50) {
             gameState = "lose_anim"; // 觸發死亡動畫
