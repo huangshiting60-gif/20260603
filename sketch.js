@@ -2532,8 +2532,9 @@ function drawMenu(pX, pY, pW, pH) {
       }
     }
     
+    // 恢復統一的水藍色，重置按鈕保持紅色警告色
     let isResetBtn = (i === 4);
-    let baseColor = isResetBtn ? color(255, 80, 80) : color(0, 200, 255); // 重置按鈕改為紅色警告色
+    let baseColor = isResetBtn ? color(255, 80, 80) : color(0, 200, 255); 
     let pulseColor = isResetBtn ? color(255, 80, 80, map(sin(frameCount * 0.1), -1, 1, 100, 200)) : color(0, 200, 255, map(sin(frameCount * 0.1), -1, 1, 100, 200));
 
     if (i === menuSelection) {

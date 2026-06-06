@@ -79,7 +79,7 @@
     
     // 動態變形所需變數
     let particleCount = 20000; // 固定粒子數以利於變形
-    let posNebula, posFireworks, posSaturn, posBlackhole;
+    let posNebula, posFireworks, posSaturn, posBlackhole, posHelix, posCube;
     
     let baseColor = new THREE.Color(0x00ccff);
     
@@ -157,8 +157,8 @@
 
       // --- 設置特效合成器 (Bloom 輝光) ---
       const renderScene = new RenderPass(scene, camera);
-      // 增加輝光強度，提升震撼度
-      bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.5, 0.6, 0.1);
+      // 適度降低輝光強度與半徑，並提高發光門檻，避免大量粒子疊加時暈染成一坨
+      bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.2);
       
       composer = new EffectComposer(renderer);
       composer.addPass(renderScene);
@@ -199,6 +199,8 @@
       posFireworks = new Float32Array(particleCount * 3);
       posSaturn = new Float32Array(particleCount * 3);
       posBlackhole = new Float32Array(particleCount * 3);
+      posHelix = new Float32Array(particleCount * 3);
+      posCube = new Float32Array(particleCount * 3);
       
       const geometry = new THREE.BufferGeometry();
       const initialPositions = new Float32Array(particleCount * 3);
@@ -250,6 +252,52 @@
         posBlackhole[idx+1] = funnelY + (Math.random() - 0.5) * (r_bh * 0.05); 
         posBlackhole[idx+2] = r_bh * Math.sin(theta_bh);
 
+        // 5. DNA 雙螺旋 (Double Helix) -> 生物與先天的象徵
+        let t_helix = (i / particleCount) * Math.PI * 24; // 12 圈
+        let r_helix = 90;
+        let strand = (i % 2 === 0) ? 0 : Math.PI; // 兩條螺旋相差 180 度
+        let noise_h = (Math.random() - 0.5) * 15;
+        
+        if (i % 30 === 0) { // 繪製中間相連的階梯 (基因鍵)
+            let rungT = Math.floor(t_helix / (Math.PI/2)) * (Math.PI/2);
+            let lerp = Math.random();
+            posHelix[idx] = r_helix * Math.cos(rungT) * lerp + r_helix * Math.cos(rungT + Math.PI) * (1-lerp) + (Math.random()-0.5)*5;
+            posHelix[idx+1] = (rungT - Math.PI * 12) * 15 + (Math.random()-0.5)*5;
+            posHelix[idx+2] = r_helix * Math.sin(rungT) * lerp + r_helix * Math.sin(rungT + Math.PI) * (1-lerp) + (Math.random()-0.5)*5;
+        } else {
+            posHelix[idx] = r_helix * Math.cos(t_helix + strand) + noise_h;
+            posHelix[idx+1] = (t_helix - Math.PI * 12) * 15 + noise_h; // Y 軸拉長
+            posHelix[idx+2] = r_helix * Math.sin(t_helix + strand) + noise_h;
+        }
+
+        // 6. 數據方塊 (Data Cube) -> 認知與知識搭建的象徵
+        let cubeSize = 250;
+        let half = cubeSize / 2;
+        let type = Math.random();
+        
+        if (type > 0.4) {
+            // 60% 粒子集中在 12 條邊緣，形成發光線框
+            let edge = i % 12;
+            let t = (Math.random() - 0.5) * cubeSize;
+            let x, y, z;
+            if(edge===0) { x=t; y=half; z=half; } else if(edge===1) { x=t; y=half; z=-half; } else if(edge===2) { x=t; y=-half; z=half; } else if(edge===3) { x=t; y=-half; z=-half; }
+            else if(edge===4) { x=half; y=t; z=half; } else if(edge===5) { x=half; y=t; z=-half; } else if(edge===6) { x=-half; y=t; z=half; } else if(edge===7) { x=-half; y=t; z=-half; }
+            else if(edge===8) { x=half; y=half; z=t; } else if(edge===9) { x=half; y=-half; z=t; } else if(edge===10){ x=-half; y=half; z=t; } else { x=-half; y=-half; z=t; }
+            posCube[idx] = x + (Math.random()-0.5)*15; posCube[idx+1] = y + (Math.random()-0.5)*15; posCube[idx+2] = z + (Math.random()-0.5)*15;
+        } else if (type > 0.1) {
+            // 30% 粒子散佈在 6 個面上 (半透明面)
+            let face = i % 6;
+            let u = (Math.random() - 0.5) * cubeSize; let v = (Math.random() - 0.5) * cubeSize;
+            if(face===0) { posCube[idx]=half; posCube[idx+1]=u; posCube[idx+2]=v; } else if(face===1) { posCube[idx]=-half; posCube[idx+1]=u; posCube[idx+2]=v; }
+            else if(face===2) { posCube[idx]=u; posCube[idx+1]=half; posCube[idx+2]=v; } else if(face===3) { posCube[idx]=u; posCube[idx+1]=-half; posCube[idx+2]=v; }
+            else if(face===4) { posCube[idx]=u; posCube[idx+1]=v; posCube[idx+2]=half; } else { posCube[idx]=u; posCube[idx+1]=v; posCube[idx+2]=-half; }
+        } else {
+            // 10% 粒子散佈在方塊內部，營造雜訊感
+            posCube[idx] = (Math.random() - 0.5) * cubeSize;
+            posCube[idx+1] = (Math.random() - 0.5) * cubeSize;
+            posCube[idx+2] = (Math.random() - 0.5) * cubeSize;
+        }
+
         // 初始位置設為星雲
         initialPositions[idx] = posNebula[idx];
         initialPositions[idx+1] = posNebula[idx+1];
@@ -264,7 +312,7 @@
       geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
       const material = new THREE.PointsMaterial({
-        size: 2.5,
+        size: 1.5, // 縮小單一粒子尺寸，讓整體輪廓更銳利清晰
         color: baseColor,
         vertexColors: true,
         blending: THREE.AdditiveBlending,
@@ -287,6 +335,10 @@
     function animate() {
       requestAnimationFrame(animate);
       
+      // --- 新增：鏡頭緩慢拉近拉遠的呼吸感 ---
+      // 0.0005 控制呼吸速度 (越小越慢)，40 控制拉近拉遠的幅度
+      camera.position.z = 400 + Math.sin(Date.now() * 0.0005) * 40;
+
       // 物理平滑過渡 (Lerp)
       currentRotation.x += (targetRotation.x - currentRotation.x) * 0.1;
       currentRotation.y += (targetRotation.y - currentRotation.y) * 0.1;
@@ -308,12 +360,12 @@
 
         // 動態調整 Bloom (輝光) 強度，讓節奏爆發時畫面更亮
         if (bloomPass) {
-          bloomPass.strength = 3.5 + (bassAvg / 255) * 3.5;
+          bloomPass.strength = 1.5 + (bassAvg / 255) * 2.0; // 降低隨音樂爆發的極限值
         }
       } else {
         // 音樂暫停或未初始化時，平滑恢復原本大小與亮度
         audioScale += (1.0 - audioScale) * 0.1;
-        if (bloomPass) bloomPass.strength += (3.5 - bloomPass.strength) * 0.1;
+        if (bloomPass) bloomPass.strength += (1.5 - bloomPass.strength) * 0.1;
       }
 
       if (particleSystem) {
@@ -354,18 +406,18 @@
         }
         
         // --- 核心：根據旋轉角度無縫變換(Morph)四種形狀 ---
-        // 將 currentRotation.y (約 -PI 到 PI) 映射為 0 到 4 的連續數值
-        let mappedRot = ((currentRotation.y + Math.PI) / (Math.PI * 2)) * 4.0;
-        mappedRot = (mappedRot % 4.0 + 4.0) % 4.0; // 確保在 0~4 迴圈
+        // 將 currentRotation.y (約 -PI 到 PI) 映射為 0 到 6 的連續數值 (因有 6 種形狀)
+        let mappedRot = ((currentRotation.y + Math.PI) / (Math.PI * 2)) * 6.0;
+        mappedRot = (mappedRot % 6.0 + 6.0) % 6.0; // 確保在 0~6 迴圈
         
         let idx1 = Math.floor(mappedRot);
-        let idx2 = (idx1 + 1) % 4;
+        let idx2 = (idx1 + 1) % 6;
         let blend = mappedRot - idx1;
         
         // 加入 Smoothstep 讓過渡更柔和
         blend = blend * blend * (3 - 2 * blend); 
 
-        const shapes = [posNebula, posSaturn, posFireworks, posBlackhole];
+        const shapes = [posNebula, posSaturn, posFireworks, posBlackhole, posHelix, posCube];
         const s1 = shapes[idx1];
         const s2 = shapes[idx2];
         const currentPos = particleSystem.geometry.attributes.position.array;
